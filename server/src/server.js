@@ -37,6 +37,15 @@ function collectErrorDetails(error) {
 function safeErrorMessage(error) {
   return String(error.message || 'No error message provided')
     .replace(/mongodb(?:\+srv)?:\/\/[^\s"'<>]+/gi, '[MongoDB URI redacted]')
+    .replace(/\bBearer\s+\S+/gi, 'Bearer [REDACTED]')
+    .replace(
+      /\b(username|user|password|passwd|token|secret|api[_-]?key|access[_-]?token|client[_-]?secret|authorization)\b(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      '$1$2[REDACTED]'
+    )
+    .replace(
+      /\beyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\b/g,
+      '[JWT redacted]'
+    )
     .replace(/[\r\n\t]+/g, ' ')
     .slice(0, 500);
 }
@@ -120,15 +129,11 @@ async function startServer() {
     return server;
   } catch (error) {
     console.error('❌ Server startup aborted.');
-    if (env.NODE_ENV === 'development') {
-      for (const detail of collectErrorDetails(error)) {
-        const code = detail.code ? ` code=${detail.code}` : '';
-        console.error(
-          `[Database diagnostic] ${detail.name || 'Error'}${code}: ${safeErrorMessage(detail)}`
-        );
-      }
-    } else {
-      console.error('Database connection or startup configuration failed.');
+    for (const detail of collectErrorDetails(error)) {
+      const code = detail.code ? ` code=${detail.code}` : '';
+      console.error(
+        `[Database diagnostic] ${detail.name || 'Error'}${code}: ${safeErrorMessage(detail)}`
+      );
     }
     // Non-zero exit status ensures orchestrators and container systems recognize failure
     process.exit(1);
