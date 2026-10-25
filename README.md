@@ -1,7 +1,7 @@
 # CareSync — Patient Records & Care Management System
 
 > **Tagline:** Better Records. Connected Care.
-> **Status:** Authenticated patient, medical-record, and appointment screens are integrated with the Express API; live Atlas connectivity remains unverified
+> **Status:** Authenticated dashboard, patient, doctor, medical-record, and appointment screens are integrated with the Express API; live Atlas connectivity remains unverified
 
 CareSync is a hospital staff portal designed for hospital administrators, doctors, nurses, and authorized healthcare personnel to manage patient information, clinical medical records, and scheduling workflows.
 
@@ -54,7 +54,8 @@ server/
 │   │   ├── audit-event.model.js
 │   │   ├── medical-record.model.js
 │   │   ├── appointment.model.js
-│   │   └── patient.model.js # Patient schema, generated ID, timestamps, indexes
+│   │   ├── patient.model.js # Patient schema, generated ID, timestamps, indexes
+│   │   └── doctor.model.js # Clinician directory and patient assignment references
 │   ├── middleware/
 │   │   ├── auth.middleware.js
 │   │   ├── errorHandler.js   # Centralized error handler & malformed JSON interceptor
@@ -98,23 +99,79 @@ npm run users:create -- --email=staff@hospital.org --role=admin
 
 The command prompts for a display name and a password twice; password input is
 not echoed. Passwords must be at least 12 characters and no more than 72 UTF-8
-bytes. Supported roles are `admin`, `clinician`, `nurse`, and `records_staff`.
-The backend stores only bcrypt hashes and returns only public account fields.
+bytes. Supported roles are `admin`, `doctor`, `nurse`, and `receptionist`;
+legacy `clinician` and `records_staff` roles remain available for existing
+accounts. Doctor CLI accounts also require `--doctorId=<24-character-id>` for
+an existing active, unlinked doctor profile. The backend stores only bcrypt
+hashes and returns only public account fields.
 Login sessions use random opaque tokens; only their SHA-256 hashes are stored
 in MongoDB. Sessions expire after eight hours and are revoked at logout.
 Cookies are HttpOnly and SameSite Strict, and Secure in production. Mutating
 authenticated requests with an Origin header must come from a configured client
 origin.
 
-The browser login uses this backend session; the client cannot select its role.
-Patient endpoints require an active session in every environment. Admin,
-clinician, and nurse roles may create/update patient records; only admins may
-archive them. All listed roles, including records staff, may read patient data.
+An existing staff password can be reset by an authenticated administrator at
+`PATCH /api/auth/users/:id/password`, providing `newPassword` and
+`confirmPassword`. The account must be active; the reset revokes all of that
+account's active sessions. The endpoint does not return the account's hash or
+the submitted password.
 
-Medical record reads are available to all staff roles; clinicians and nurses
-may create/update records, and only admins may archive them. Appointment reads
-are available to all staff roles; all roles may schedule appointments,
-clinicians and nurses may update them, and only admins may archive/cancel them.
+For initial administrator recovery when no administrator can sign in, a trusted
+operator with authorized access to the server environment and database can run:
+
+```powershell
+cd server
+npm run users:reset-password
+```
+
+This interactive command resets only an existing active account, hides and
+confirms the new password, and revokes that account's sessions. It does not
+create accounts or activate inactive accounts. Use it only from an authorized,
+private terminal; it relies on the server's configured database connection.
+
+The browser login uses this backend session; the client cannot select its role.
+The existing `User` model stores bcrypt password hashes and role/status values;
+sessions store only a hash of a random HttpOnly cookie token. Doctor profiles
+remain separate documents. A doctor login stores a unique `doctor` reference
+to an existing profile; creating a profile does not create an account.
+
+Administrators use **Staff** in the CareSync navigation to create accounts,
+view roles and doctor links, and activate/deactivate accounts. For a doctor
+account, either create a new profile (with free-text specialty and optional
+department/contact details) in the same transaction as the account, or choose
+an active, unlinked existing profile. Nurses and receptionists do not need
+doctor profiles; the existing `clinician` and `records_staff` roles can also be
+provisioned for compatibility with their existing permissions. The administrator supplies a temporary initial
+password (minimum 12 characters); it is bcrypt-hashed on the server and never
+returned to the browser after creation. Convey it to the staff member through
+a separate secure channel. Each member signs in on the existing `/login` page
+with their own email and password. There is no public self-registration.
+
+The current permission policy is:
+
+| Role | Access |
+| :--- | :--- |
+| `admin` | Manage staff accounts and doctor profiles; full existing dashboard, patient, record, and appointment permissions. |
+| `doctor` | Must be linked to an active doctor profile; can access only patients, records, appointments, and dashboard data assigned to that profile. Cannot manage staff, archive records, or administer profiles. |
+| `nurse` | Existing patient and clinical workflow permissions are retained; may create/update patients and records and manage appointment status. |
+| `clinician` | Legacy role retained with its existing clinical permissions for previously provisioned accounts. |
+| `receptionist` | Patient directory registration summary and demographic registration/update, doctor lookup, and appointment read/scheduling. Cannot open clinical patient dossiers, read medical records or dashboard activity, change doctor assignments, or change appointment status. Appointment reason text is masked. |
+| `records_staff` | Legacy role retained with existing read access to patients/medical records and appointment scheduling. |
+
+All API permissions are enforced server-side and audited. Staff roles cannot
+change roles through the account API; role is assigned at account creation.
+Deactivation revokes existing sessions and blocks future sign-in. Administrators
+cannot deactivate their own account. Profile/account links are unique; profiles,
+patients, appointments, and records are not deleted by account operations.
+The user model's unique sparse doctor-reference index is created by the normal
+server index initialization; existing users without a doctor link and existing
+records require no migration or data reset.
+
+Medical record reads are available to admins, doctors, legacy clinicians,
+nurses, and legacy records staff; admins/doctors/clinicians/nurses may
+create/update records, and only admins may archive them. Appointment reads and
+scheduling are available to staff roles; admins/doctors/clinicians/nurses may
+update appointment details/status, and only admins may archive/cancel them.
 Every authenticated patient, medical-record, and appointment route records a
 role decision in an append-only application audit collection before continuing.
 Events include actor, action, resource, outcome, and a patient/record reference
@@ -123,13 +180,36 @@ Authorization fails closed if the audit write fails. The app does not expose
 audit records through an API; deployment database permissions and retention
 must also prevent unauthorized modification and deletion.
 
+Doctor profiles are listed for authenticated staff. Only administrators may
+create, edit, deactivate, or reactivate profiles; deactivation preserves
+patient and appointment references. Patient and appointment assignments store
+the selected doctor's database ID. Existing appointments without a doctor
+reference retain their stored physician name.
+
 ### Patient API
 
 The schema follows the intake form: first/last name, date of birth, gender,
 phone, email, address, emergency contact, status, physician, room, blood type,
-and allergies. The backend generates an immutable `CS-...` identifier and
+and allergies. New patients must reference an active doctor from `/api/doctors`.
+The backend generates an immutable `CS-...` identifier and
 MongoDB enforces uniqueness with an index. Patient records have timestamps.
 Directory deletion archives a record without deleting clinical history.
+
+The dashboard summary (`GET /api/dashboard`) returns active-patient and
+appointment counts, recent patients, and upcoming appointments from MongoDB.
+Counts use database queries rather than loading full collections. Doctor
+directory reads are authenticated, authorized, and audited.
+
+Seed fictional doctor records explicitly for local development:
+
+```powershell
+cd server
+npm run doctors:seed
+```
+
+The seed script uses the configured `MONGODB_URI`, is safe to repeat, inserts
+only doctors, and does not modify existing records. Its clinician names are
+fictional examples, not claims about real or licensed practitioners.
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
@@ -215,14 +295,16 @@ live database.
 | Route | Component | Description |
 | :--- | :--- | :--- |
 | `/login` | `LoginPage` | Staff credential login against the backend |
-| `/dashboard` | `DashboardPage` | Demonstration dashboard using clearly labeled synthetic data |
+| `/dashboard` | `DashboardPage` | Database-backed hospital summary and recent activity |
 | `/patients` | `PatientsPage` | Patient directory with search, filter, sort, and pagination |
 | `/patients/new` | `PatientFormPage` | New patient registration dossier |
 | `/patients/:id` | `PatientDetailPage` | Patient clinical dossier with tabs (Overview, Records, Appointments) |
 | `/patients/:id/edit`| `PatientFormPage` | Edit existing patient record |
 | `/medical-records` | `MedicalRecordsPage` | Clinical encounter directory & dossier viewer |
 | `/medical-records/new` | `NewMedicalRecordPage` | File new clinical progress notes & prescription record |
-| `/appointments` | `AppointmentsPage` | Schedule, confirm, and cancel clinical appointments |
+| `/appointments` | `AppointmentsPage` | Schedule, reassign, confirm, and cancel clinical appointments |
+| `/doctors` | `DoctorsPage` | Admin-only clinician profile management |
+| `/staff` | `StaffPage` | Admin-only account provisioning and access status |
 | `/settings` | `SettingsPage` | Staff profile, station preferences & security notices |
 
 ### Backend Endpoints
@@ -230,18 +312,25 @@ live database.
 | :--- | :--- | :--- | :--- |
 | `GET` | `/api/health` | Public | Confirms Express API service status and environment |
 | `GET` | `/api/health/db` | Public | Reports MongoDB connection readiness without exposing connection details |
+| `GET` | `/api/dashboard` | Authenticated staff roles | Database-backed dashboard statistics and latest activity |
+| `GET` | `/api/doctors` | Authenticated staff roles | Active clinician directory |
+| `POST` | `/api/doctors` | Admin | Create a validated doctor profile |
+| `PATCH` | `/api/doctors/:id` | Admin | Edit or safely deactivate/reactivate a doctor |
+| `GET` | `/api/staff` | Admin | List account roles/status and linked doctor profile names |
+| `POST` | `/api/staff` | Admin | Create an account with an initial password and optional doctor link |
+| `PATCH` | `/api/staff/:id/status` | Admin | Activate/deactivate an account and revoke sessions on deactivation |
 | `POST` | `/api/auth/login` | Public, rate-limited | Verify staff credentials and issue an HttpOnly session cookie |
 | `GET` | `/api/auth/session` | Authenticated | Return the current account's public profile |
 | `POST` | `/api/auth/logout` | Public, idempotent | Revoke the current session and clear its cookie |
 | `GET` | `/api/patients` | Authenticated staff roles | Searchable, filterable, paginated patient directory |
 | `GET` | `/api/patients/:id` | Authenticated staff roles | Retrieve by patient ID or MongoDB ObjectId |
-| `POST` | `/api/patients` | Admin, clinician, nurse | Create a patient |
-| `PATCH` | `/api/patients/:id` | Admin, clinician, nurse | Update allowed patient fields |
+| `POST` | `/api/patients` | Admin, doctor, clinician, nurse, receptionist | Create a patient (receptionists can submit demographics only) |
+| `PATCH` | `/api/patients/:id` | Admin, doctor, clinician, nurse | Update allowed patient fields |
 | `DELETE` | `/api/patients/:id` | Admin | Archive a patient |
 | `GET` | `/api/medical-records` | Authenticated staff roles | Searchable, date-filtered, paginated clinical record list |
 | `GET` | `/api/medical-records/:id` | Authenticated staff roles | Read a clinical record |
-| `POST` | `/api/medical-records` | Admin, clinician, nurse | Create a record for an active patient |
-| `PATCH` | `/api/medical-records/:id` | Admin, clinician, nurse | Update a record |
+| `POST` | `/api/medical-records` | Admin, doctor, clinician, nurse | Create a record for an authorized active patient |
+| `PATCH` | `/api/medical-records/:id` | Admin, doctor, clinician, nurse | Update an authorized record |
 | `DELETE` | `/api/medical-records/:id` | Admin | Archive a record |
 | `GET` | `/api/appointments` | Authenticated staff roles | Searchable, status/date-filtered, paginated appointment list |
 | `GET` | `/api/appointments/:id` | Authenticated staff roles | Read an appointment |
@@ -259,12 +348,11 @@ file or your deployment secret manager; never commit them. The backend resolves
 `server/.env` relative to its configuration file (not the shell's working
 directory), and variables already supplied by the runtime take precedence.
 
-The patient directory, detail, create, and edit screens use the authenticated
+The dashboard, patient directory, detail, create, and edit screens use the authenticated
 Express API. Medical-record creation, listing, and patient detail tabs, as well
 as appointment scheduling, listing, status updates, and cancellation, also use
 authenticated API endpoints with loading, empty, and error states. The
-dashboard remains a synthetic demonstration view and is explicitly labeled;
-it must not be treated as live patient or appointment data.
+dashboard counts and patient/appointment lists are retrieved from the backend.
 
 ## 5. Remaining Scope
 
@@ -280,7 +368,8 @@ it must not be treated as live patient or appointment data.
   deployment controls, identity lifecycle, privacy review, and live DB testing
   are complete.
 - **Atlas connectivity**: The configured Atlas connection is still failing at
-  TLS handshake; live database authentication and sessions remain unverified.
+  TLS handshake; live database authentication, dashboard queries, and persistent
+  patient/doctor assignments remain unverified.
 
 Backend unit tests use isolated model mocks. They do not connect to Atlas,
 verify live account provisioning, or test persistent clinical records and

@@ -3,14 +3,21 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
 import { env } from '../config/env.js';
+import AuditEvent from '../models/audit-event.model.js';
 import AuthSession from '../models/auth-session.model.js';
 import User from '../models/user.model.js';
+import { createAuditedAuthorization } from '../middleware/audit.middleware.js';
 import {
   createRequireAuthentication,
   SESSION_COOKIE_NAME,
   SESSION_COOKIE_OPTIONS,
 } from '../middleware/auth.middleware.js';
-import { loginSchema } from '../validation/auth.validation.js';
+import { validateRequest } from '../middleware/validate-request.middleware.js';
+import {
+  loginSchema,
+  resetPasswordParamsSchema,
+  resetPasswordSchema,
+} from '../validation/auth.validation.js';
 
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const DUMMY_PASSWORD_HASH = bcrypt.hashSync(randomBytes(32).toString('hex'), 12);
@@ -37,12 +44,14 @@ function toPublicUser(user) {
     email: user.email,
     displayName: user.displayName,
     role: user.role,
+    doctorId: user.doctor ? String(user.doctor) : '',
   };
 }
 
 export function createAuthRouter({
   UserModel = User,
   SessionModel = AuthSession,
+  AuditModel = AuditEvent,
   authenticate = createRequireAuthentication(SessionModel),
 } = {}) {
   const router = Router();
@@ -52,6 +61,13 @@ export function createAuthRouter({
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, message: 'Too many login attempts. Try again later.' },
+  });
+  const resetPasswordLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: env.NODE_ENV === 'test' ? 100 : 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: 'Too many password reset attempts. Try again later.' },
   });
 
   router.post('/login', loginLimiter, validateLogin, async (req, res, next) => {
@@ -89,6 +105,67 @@ export function createAuthRouter({
     }
   });
 
+  router.patch(
+    '/users/:id/password',
+    authenticate,
+    resetPasswordLimiter,
+    createAuditedAuthorization(AuditModel, {
+      roles: ['admin'],
+      action: 'reset_password',
+      resource: 'users',
+    }),
+    validateRequest(resetPasswordParamsSchema, 'params', 'validatedParams'),
+    validateRequest(resetPasswordSchema, 'body', 'validatedBody'),
+    async (req, res, next) => {
+      try {
+        const { id } = req.validatedParams;
+        const { newPassword } = req.validatedBody;
+        const user = await UserModel.findOne({ _id: id })
+          .select('_id isActive')
+          .exec();
+
+        if (!user) {
+          return res.status(404).json({
+            success: false,
+            message: 'Staff account was not found',
+          });
+        }
+        if (!user.isActive) {
+          return res.status(409).json({
+            success: false,
+            message: 'Inactive staff accounts cannot have their password reset',
+          });
+        }
+
+        const passwordHash = await bcrypt.hash(newPassword, 12);
+        const update = await UserModel.updateOne(
+          { _id: user._id, isActive: true },
+          { $set: { passwordHash } }
+        ).exec();
+
+        if (update.matchedCount === 0) {
+          const currentUser = await UserModel.findOne({ _id: id })
+            .select('_id isActive')
+            .exec();
+          return res.status(currentUser ? 409 : 404).json({
+            success: false,
+            message: currentUser
+              ? 'Inactive staff accounts cannot have their password reset'
+              : 'Staff account was not found',
+          });
+        }
+
+        await SessionModel.deleteMany({ userId: user._id });
+        return res.json({
+          success: true,
+          message: 'Password reset successfully. The user must sign in again.',
+        });
+      } catch (error) {
+        return next(error);
+      }
+    }
+  );
+
   router.get('/session', authenticate, (req, res) =>
     res.json({
       success: true,
@@ -98,6 +175,7 @@ export function createAuthRouter({
           email: req.auth.email,
           displayName: req.auth.displayName,
           role: req.auth.role,
+          doctorId: req.auth.doctorId,
         },
       },
     })

@@ -53,6 +53,7 @@ const appointmentFields = {
   reason: requiredText(1000),
   type: requiredText(120),
   assignedDoctor: requiredText(120),
+  doctorId: z.string().regex(/^[a-f\d]{24}$/i).optional(),
   room: optionalText(80),
   status: z.enum(['Scheduled', 'Confirmed', 'In Progress', 'Completed', 'Cancelled']).optional(),
 };

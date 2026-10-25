@@ -6,6 +6,7 @@ import { ensureUserIndexes } from './models/user.model.js';
 import { ensureAuthSessionIndexes } from './models/auth-session.model.js';
 import { ensureMedicalRecordIndexes } from './models/medical-record.model.js';
 import { ensureAppointmentIndexes } from './models/appointment.model.js';
+import { ensureDoctorIndexes } from './models/doctor.model.js';
 import { ensureAuditEventIndexes } from './models/audit-event.model.js';
 
 let server = null;
@@ -112,6 +113,7 @@ async function startServer() {
       ensureAuthSessionIndexes(),
       ensureMedicalRecordIndexes(),
       ensureAppointmentIndexes(),
+      ensureDoctorIndexes(),
       ensureAuditEventIndexes(),
     ]);
 

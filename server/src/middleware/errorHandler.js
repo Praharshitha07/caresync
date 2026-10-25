@@ -50,27 +50,46 @@ export function errorHandler(err, req, res, next) {
         : isDuplicate
           ? 'A patient with a conflicting identifier already exists'
           : isMongooseValidation
-            ? 'Patient data failed validation'
+            ? 'Data failed validation'
             : 'Request contains an invalid identifier or value'
       : isDatabaseUnavailable
         ? 'Database is temporarily unavailable'
         : 'An internal server error occurred';
 
-  // Log error type only; driver messages and request data may contain sensitive values.
-  if (!isProduction && env.NODE_ENV !== 'test') {
-    const sensitivePath = [
-      '/api/patients',
-      '/api/medical-records',
-      '/api/appointments',
-    ].some((prefix) => req.path.startsWith(prefix));
-    const path = sensitivePath ? '/api/<protected-resource>' : req.path;
-    console.error(`[Error] ${req.method} ${path}: ${err.name || 'Error'}`);
-  }
-
   const errorResponse = {
     success: false,
     message,
   };
+
+  if (!isProduction && env.NODE_ENV !== 'test') {
+    if (req.path === '/api/dashboard') {
+      const validationErrors = isMongooseValidation
+        ? Object.entries(err.errors || {}).map(([field, validationError]) => ({
+            field,
+            kind: validationError.kind,
+          }))
+        : [];
+      console.error('[CareSync dashboard diagnostic]', {
+        url: req.originalUrl,
+        status: statusCode,
+        message: errorResponse.message,
+        errorName: err.name || 'Error',
+        validationErrors,
+      });
+    }
+
+    // Log only error type and safe route labels for other protected resources.
+    const sensitivePath = [
+      '/api/patients',
+      '/api/medical-records',
+      '/api/appointments',
+      '/api/dashboard',
+    ].some((prefix) => req.path.startsWith(prefix));
+    const path = sensitivePath ? '/api/<protected-resource>' : req.path;
+    if (req.path !== '/api/dashboard') {
+      console.error(`[Error] ${req.method} ${path}: ${err.name || 'Error'}`);
+    }
+  }
 
   res.status(statusCode).json(errorResponse);
 }

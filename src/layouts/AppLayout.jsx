@@ -90,6 +90,20 @@ export default function AppLayout() {
       };
     }
 
+    if (path.startsWith('/doctors')) {
+      return {
+        title: 'Doctor Management',
+        breadcrumbs: [{ label: 'CareSync', path: '/dashboard' }, { label: 'Doctors' }],
+      };
+    }
+
+    if (path.startsWith('/staff')) {
+      return {
+        title: 'Staff Management',
+        breadcrumbs: [{ label: 'CareSync', path: '/dashboard' }, { label: 'Staff' }],
+      };
+    }
+
     if (path.startsWith('/settings')) {
       return {
         title: 'System Settings',

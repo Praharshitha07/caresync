@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import {
   Users,
@@ -8,9 +8,7 @@ import {
   FileText,
   ChevronRight,
   Eye,
-  Info,
   CalendarPlus,
-  SlidersHorizontal,
 } from 'lucide-react';
 import PageContainer from '../components/PageContainer';
 import StatCard from '../components/StatCard';
@@ -20,37 +18,39 @@ import StatusBadge from '../components/StatusBadge';
 import DataTable from '../components/DataTable';
 import EmptyState from '../components/EmptyState';
 import { useAuth } from '../context/AuthContext';
-import { useHospitalData } from '../context/HospitalDataContext';
+import LoadingState from '../components/LoadingState';
+import ErrorState from '../components/ErrorState';
+import { getDashboardSummary } from '../services/api';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const canManagePatients = ['admin', 'clinician', 'nurse'].includes(user?.role);
-  const { patients, appointments } = useHospitalData();
+  const canManagePatients = ['admin', 'doctor', 'clinician', 'nurse'].includes(user?.role);
+  const [dashboard, setDashboard] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
 
-  // Toggle for testing/reviewing empty state design required by spec
-  const [showEmptyState, setShowEmptyState] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    setIsLoading(true);
+    setLoadError('');
+    getDashboardSummary({ signal: controller.signal })
+      .then(setDashboard)
+      .catch((error) => {
+        if (error.name !== 'AbortError') setLoadError(error.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoading(false);
+      });
+    return () => controller.abort();
+  }, [reloadKey]);
 
-  // Compute metrics from hospital data
-  const totalPatientsCount = patients.length;
-  const todayStr = new Date().toISOString().split('T')[0];
-  const todayAppointmentsCount = appointments.filter((a) => a.date === todayStr).length;
-  const upcomingAppointmentsCount = appointments.filter(
-    (a) => a.status === 'Scheduled' || a.status === 'Confirmed'
-  ).length;
-
-  const oneDayAgo = new Date();
-  oneDayAgo.setDate(oneDayAgo.getDate() - 1);
-  const recentlyAddedCount = patients.filter(
-    (p) => new Date(p.registrationDate) >= oneDayAgo
-  ).length;
-
-  const patientsData = showEmptyState ? [] : patients.slice(0, 5);
-  const appointmentsData = showEmptyState
-    ? []
-    : appointments
-        .filter((a) => a.status === 'Confirmed' || a.status === 'In Progress' || a.status === 'Scheduled')
-        .slice(0, 5);
+  const retry = useCallback(() => setReloadKey((key) => key + 1), []);
+  const stats = dashboard?.stats || {};
+  const patientsData = dashboard?.recentPatients || [];
+  const appointmentsData = dashboard?.upcomingAppointments || [];
+  const totalPatientsCount = stats?.totalPatients ?? 0;
 
   // Column configuration for Recent Patients Table
   const patientColumns = [
@@ -81,6 +81,15 @@ export default function DashboardPage() {
             {row.age} yrs • {row.gender}
           </span>
         </div>
+      ),
+    },
+    {
+      key: 'doctorName',
+      header: 'Attending Doctor',
+      render: (row) => (
+        <span className="text-xs text-slate-600">
+          {row.doctorName || 'Not assigned'}
+        </span>
       ),
     },
     {
@@ -126,41 +135,26 @@ export default function DashboardPage() {
       title="Dashboard"
       subtitle={`Welcome back, ${user?.displayName || 'staff member'}. Clinical overview and hospital activity for today.`}
       actions={
-        <div className="flex items-center gap-2">
-          {/* Quick state switcher for reviewers to check the empty-state requirement */}
-          <button
-            type="button"
-            onClick={() => setShowEmptyState(!showEmptyState)}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-600 bg-white border border-brand-border rounded-md hover:bg-slate-50 transition-colors"
-            title="Inspect empty state layout"
+        canManagePatients ? (
+          <PrimaryButton
+            icon={UserPlus}
+            onClick={() => navigate('/patients/new')}
           >
-            <SlidersHorizontal className="h-3.5 w-3.5 text-brand-muted" />
-            <span>{showEmptyState ? 'Show Sample Data' : 'Preview Empty State'}</span>
-          </button>
-
-          canManagePatients ? (
-            <PrimaryButton
-              icon={UserPlus}
-              onClick={() => navigate('/patients/new')}
-            >
-              Add Patient
-            </PrimaryButton>
-          ) : null
-        </div>
+            Add Patient
+          </PrimaryButton>
+        ) : null
       }
     >
-      {/* Sample Data Disclaimer Banner */}
-      <div className="mb-6 p-3 bg-white border border-brand-border rounded-lg shadow-card flex items-start sm:items-center justify-between gap-3 text-xs">
-        <div className="flex items-center gap-2 text-brand-muted">
-          <Info className="h-4 w-4 text-brand-primary flex-shrink-0" />
-          <span>
-            <strong className="text-brand-text font-semibold">Demonstration data:</strong> This dashboard uses synthetic sample records and is not connected to the live patient database. Use Patient Directory, Medical Records, and Appointments for authenticated API data.
-          </span>
-        </div>
-        <span className="hidden sm:inline-block px-2 py-0.5 rounded text-[11px] font-medium bg-teal-50 text-brand-primary border border-teal-200 whitespace-nowrap">
-          Sample Data
-        </span>
-      </div>
+      {isLoading ? (
+        <LoadingState message="Loading live hospital dashboard..." />
+      ) : loadError ? (
+        <ErrorState
+          title="Unable to Load Dashboard"
+          message={loadError}
+          onRetry={retry}
+        />
+      ) : (
+      <>
 
       {/* Summary Stat Cards */}
       <section aria-labelledby="metrics-heading" className="mb-8">
@@ -170,26 +164,26 @@ export default function DashboardPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             title="Total Patients"
-            value={showEmptyState ? '0' : totalPatientsCount.toLocaleString()}
-            helperText={showEmptyState ? 'No active patient records' : `${totalPatientsCount} registered in directory`}
+            value={totalPatientsCount.toLocaleString()}
+            helperText={`${totalPatientsCount} active records in directory`}
             icon={Users}
           />
           <StatCard
             title="Today's Appointments"
-            value={showEmptyState ? '0' : todayAppointmentsCount.toString()}
-            helperText={showEmptyState ? 'No appointments today' : `${todayAppointmentsCount} scheduled for today`}
+            value={(stats.todayAppointments ?? 0).toString()}
+            helperText={`${stats.todayAppointments ?? 0} scheduled for today`}
             icon={Calendar}
           />
           <StatCard
             title="Upcoming Appointments"
-            value={showEmptyState ? '0' : upcomingAppointmentsCount.toString()}
-            helperText={showEmptyState ? 'None scheduled' : 'Confirmed or in progress'}
+            value={(stats.upcomingAppointments ?? 0).toString()}
+            helperText="Scheduled or confirmed"
             icon={Clock}
           />
           <StatCard
             title="Recently Added Patients"
-            value={showEmptyState ? '0' : recentlyAddedCount.toString()}
-            helperText={showEmptyState ? '0 new admissions' : 'Registered in last 24 hours'}
+            value={(stats.recentlyAddedPatients ?? 0).toString()}
+            helperText="Registered in the last 24 hours"
             icon={UserPlus}
           />
         </div>
@@ -292,17 +286,13 @@ export default function DashboardPage() {
               {patientsData.length === 0 ? (
                 <EmptyState
                   title="No Registered Patients"
-                  description="There are currently no patient admissions or outpatient registrations on record."
+                  description="There are no patient records yet. Register your first patient to get started."
                   icon={Users}
-                  action={
-                    <PrimaryButton
-                      size="sm"
-                      icon={UserPlus}
-                      onClick={() => setShowEmptyState(false)}
-                    >
-                      Load Sample Patients
+                  action={canManagePatients ? (
+                    <PrimaryButton size="sm" icon={UserPlus} onClick={() => navigate('/patients/new')}>
+                      Register First Patient
                     </PrimaryButton>
-                  }
+                  ) : null}
                 />
               ) : (
                 <DataTable
@@ -334,7 +324,7 @@ export default function DashboardPage() {
                 to="/appointments"
                 className="text-xs font-semibold text-brand-primary hover:underline flex items-center gap-1"
               >
-                <span>All ({appointments.length})</span>
+                <span>All</span>
                 <ChevronRight className="h-3.5 w-3.5" />
               </Link>
             </div>
@@ -343,16 +333,16 @@ export default function DashboardPage() {
               {appointmentsData.length === 0 ? (
                 <EmptyState
                   title="No Scheduled Appointments"
-                  description="No clinical appointments are slated for the remainder of today."
+                  description="There are no upcoming appointments. Schedule the first appointment when you're ready."
                   icon={Calendar}
-                  action={
+                  action={canManagePatients ? (
                     <SecondaryButton
                       size="sm"
-                      onClick={() => setShowEmptyState(false)}
+                      onClick={() => navigate('/appointments')}
                     >
-                      Load Sample Appointments
+                      Schedule Appointment
                     </SecondaryButton>
-                  }
+                  ) : null}
                 />
               ) : (
                 <div className="space-y-3">
@@ -365,14 +355,29 @@ export default function DashboardPage() {
                         <span className="text-sm font-semibold text-brand-text">
                           {apt.patientName}
                         </span>
-                        <StatusBadge variant={apt.statusVariant}>
+                        <StatusBadge
+                          variant={
+                            apt.status === 'Confirmed'
+                              ? 'success'
+                              : apt.status === 'In Progress'
+                                ? 'warning'
+                                : 'info'
+                          }
+                        >
                           {apt.status}
                         </StatusBadge>
                       </div>
 
                       <div className="flex items-center gap-1.5 text-xs text-brand-primary font-medium mb-1">
                         <Clock className="h-3.5 w-3.5 flex-shrink-0" />
-                        <span>{apt.dateTime || `${apt.date} at ${apt.time}`}</span>
+                        <span>
+                          {new Date(`${apt.date}T00:00:00`).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                          })}{' '}
+                          at {apt.time}
+                        </span>
                       </div>
 
                       <p className="text-xs text-slate-600 line-clamp-1 mb-1">
@@ -393,6 +398,8 @@ export default function DashboardPage() {
           </div>
         </section>
       </div>
+      </>
+      )}
     </PageContainer>
   );
 }

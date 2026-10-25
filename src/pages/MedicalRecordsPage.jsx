@@ -23,7 +23,7 @@ import { useAuth } from '../context/AuthContext';
 export default function MedicalRecordsPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const canCreate = ['admin', 'clinician', 'nurse'].includes(user?.role);
+  const canCreate = ['admin', 'doctor', 'clinician', 'nurse'].includes(user?.role);
   const [medicalRecords, setMedicalRecords] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0 });
   const [currentPage, setCurrentPage] = useState(1);
@@ -99,7 +99,7 @@ export default function MedicalRecordsPage() {
                 setCurrentPage(1);
               }}
               onClear={() => setSearchQuery('')}
-              placeholder="Search by patient ID, diagnosis, or physician..."
+              placeholder="Search by patient name, record ID, diagnosis, or physician..."
               ariaLabel="Search medical records"
             />
           </div>
@@ -175,7 +175,7 @@ export default function MedicalRecordsPage() {
               <thead className="bg-slate-50 text-xs font-semibold text-brand-muted uppercase tracking-wider">
                 <tr>
                   <th scope="col" className="px-4 py-3">Record ID</th>
-                  <th scope="col" className="px-4 py-3">Patient</th>
+                  <th scope="col" className="px-4 py-3">Patient Name</th>
                   <th scope="col" className="px-4 py-3">Visit Date</th>
                   <th scope="col" className="px-4 py-3">Primary Diagnosis</th>
                   <th scope="col" className="px-4 py-3">Attending Physician</th>
@@ -198,7 +198,7 @@ export default function MedicalRecordsPage() {
                         to={`/patients/${record.patientId}`}
                         className="font-medium text-brand-text hover:text-brand-primary transition-colors block"
                       >
-                        Patient {record.patientId}
+                        {record.patientName || 'Patient record unavailable'}
                       </Link>
                       <span className="font-mono text-[11px] text-brand-muted">
                         {record.patientId}

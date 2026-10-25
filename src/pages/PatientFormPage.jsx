@@ -19,10 +19,33 @@ import SecondaryButton from '../components/SecondaryButton';
 import EmptyState from '../components/EmptyState';
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
-import { ApiError, createPatient, getPatient, updatePatient } from '../services/api';
+import {
+  ApiError,
+  createPatient,
+  getPatient,
+  listDoctors,
+  updatePatient,
+} from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
-function toApiPatient(formData) {
+function toApiPatient(formData, role) {
+  if (role === 'receptionist') {
+    return {
+      firstName: formData.firstName,
+      lastName: formData.lastName,
+      dob: formData.dob,
+      gender: formData.gender,
+      phone: formData.phone,
+      email: formData.email,
+      address: formData.address,
+      emergencyContact: {
+        name: formData.emergencyContactName,
+        relationship: formData.emergencyContactRelation,
+        phone: formData.emergencyContactPhone,
+      },
+      doctorId: formData.doctorId,
+    };
+  }
   return {
     firstName: formData.firstName,
     lastName: formData.lastName,
@@ -38,22 +61,27 @@ function toApiPatient(formData) {
     },
     status: formData.status,
     primaryPhysician: formData.primaryPhysician,
+    ...(formData.doctorId ? { doctorId: formData.doctorId } : {}),
     room: formData.room,
     bloodType: formData.bloodType,
     allergies: formData.allergies,
   };
 }
-
 export default function PatientFormPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const canManagePatients = ['admin', 'clinician', 'nurse'].includes(user?.role);
+  const canManagePatients = ['admin', 'doctor', 'clinician', 'nurse'].includes(user?.role)
+    || (user?.role === 'receptionist' && !id);
   const isEditMode = Boolean(id);
   const [existingPatient, setExistingPatient] = useState(null);
   const [isLoadingPatient, setIsLoadingPatient] = useState(isEditMode);
   const [loadError, setLoadError] = useState('');
   const [loadKey, setLoadKey] = useState(0);
+  const [doctors, setDoctors] = useState([]);
+  const [doctorsLoading, setDoctorsLoading] = useState(true);
+  const [doctorsError, setDoctorsError] = useState('');
+  const [doctorsReloadKey, setDoctorsReloadKey] = useState(0);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -67,7 +95,7 @@ export default function PatientFormPage() {
     emergencyContactName: '',
     emergencyContactRelation: '',
     emergencyContactPhone: '',
-    primaryPhysician: 'Dr. Sarah Jenkins',
+    doctorId: '',
     room: 'Ambulatory Care Unit',
     bloodType: 'O+',
     allergies: '',
@@ -78,6 +106,29 @@ export default function PatientFormPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionFeedback, setSubmissionFeedback] = useState(null);
   const [serverError, setServerError] = useState('');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setDoctorsLoading(true);
+    setDoctorsError('');
+    listDoctors({}, { signal: controller.signal })
+      .then((activeDoctors) => {
+        const availableDoctors = user?.role === 'doctor'
+          ? activeDoctors.filter((doctor) => doctor.id === user.doctorId)
+          : activeDoctors;
+        setDoctors(availableDoctors);
+        if (user?.role === 'doctor' && availableDoctors[0]) {
+          setFormData((previous) => ({ ...previous, doctorId: availableDoctors[0].id }));
+        }
+      })
+      .catch((error) => {
+        if (error.name !== 'AbortError') setDoctorsError(error.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setDoctorsLoading(false);
+      });
+    return () => controller.abort();
+  }, [doctorsReloadKey, user?.doctorId, user?.role]);
 
   useEffect(() => {
     if (!isEditMode) {
@@ -116,7 +167,7 @@ export default function PatientFormPage() {
       emergencyContactName: existingPatient.emergencyContact?.name || '',
       emergencyContactRelation: existingPatient.emergencyContact?.relationship || '',
       emergencyContactPhone: existingPatient.emergencyContact?.phone || '',
-      primaryPhysician: existingPatient.primaryPhysician || '',
+      doctorId: existingPatient.doctorId || '',
       room: existingPatient.room || '',
       bloodType: existingPatient.bloodType || 'Unknown',
       allergies: existingPatient.allergies || '',
@@ -206,6 +257,11 @@ export default function PatientFormPage() {
     } else if (formData.phone.trim().length < 7) {
       newErrors.phone = 'Please provide a valid telephone number.';
     }
+    if (!isEditMode && !formData.doctorId) {
+      newErrors.doctorId = doctors.length
+        ? 'Select an attending doctor.'
+        : 'An active doctor must be available before registering a patient.';
+    }
 
     if (formData.email.trim()) {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -225,7 +281,7 @@ export default function PatientFormPage() {
     setIsSubmitting(true);
     setServerError('');
     try {
-      const payload = toApiPatient(formData);
+      const payload = toApiPatient(formData, user?.role);
       const savedPatient = isEditMode
         ? await updatePatient(id, payload)
         : await createPatient(payload);
@@ -235,7 +291,10 @@ export default function PatientFormPage() {
           ? `Patient ${savedPatient.name} (${savedPatient.id}) updated successfully.`
           : `New patient record ${savedPatient.id} (${savedPatient.name}) registered successfully.`,
       });
-      window.setTimeout(() => navigate(`/patients/${savedPatient.id}`), 700);
+      window.setTimeout(
+        () => navigate(user?.role === 'receptionist' ? '/patients' : `/patients/${savedPatient.id}`),
+        700
+      );
     } catch (error) {
       if (error instanceof ApiError && error.errors.length) {
         const fieldMap = {
@@ -288,6 +347,15 @@ export default function PatientFormPage() {
           {serverError}
         </div>
       )}
+
+      {doctorsError ? (
+        <ErrorState
+          title="Unable to Load Doctors"
+          message={doctorsError}
+          onRetry={() => setDoctorsReloadKey((key) => key + 1)}
+          className="mb-4"
+        />
+      ) : null}
 
       {/* Success Notification */}
       {submissionFeedback && (
@@ -595,6 +663,7 @@ export default function PatientFormPage() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-3 border-t border-slate-100">
             {/* Status */}
+            {user?.role !== 'receptionist' && (
             <div>
               <label
                 htmlFor="status"
@@ -616,31 +685,46 @@ export default function PatientFormPage() {
                 <option value="Discharged">Discharged</option>
               </select>
             </div>
+            )}
 
-            {/* Primary Physician */}
+            {/* Attending Doctor */}
             <div>
               <label
-                htmlFor="primaryPhysician"
+                htmlFor="doctorId"
                 className="block text-xs font-semibold text-brand-text mb-1"
               >
-                Attending Physician
+                Attending Doctor <span className="text-brand-error">*</span>
               </label>
               <select
-                id="primaryPhysician"
-                name="primaryPhysician"
-                value={formData.primaryPhysician}
+                id="doctorId"
+                name="doctorId"
+                value={formData.doctorId}
                 onChange={handleChange}
-                disabled={isSubmitting}
+                disabled={isSubmitting || doctorsLoading || Boolean(doctorsError)}
                 className="block w-full py-2 px-3 text-sm rounded-md border border-brand-border bg-white text-brand-text focus:outline-none focus:ring-1 focus:ring-brand-primary"
               >
-                <option value="Dr. Sarah Jenkins">Dr. Sarah Jenkins (Internal Med)</option>
-                <option value="Dr. Robert Chen">Dr. Robert Chen (Orthopedics)</option>
-                <option value="Dr. Maya Patel">Dr. Maya Patel (Cardiology)</option>
-                <option value="Dr. Gregory House">Dr. Gregory House (Diagnostic)</option>
+                <option value="">Select an active doctor</option>
+                {doctors.map((doctor) => (
+                  <option key={doctor.id} value={doctor.id}>
+                    {doctor.name} ({doctor.specialty})
+                  </option>
+                ))}
               </select>
+              {doctorsLoading ? (
+                <p className="mt-1 text-xs text-brand-muted">Loading active doctors...</p>
+              ) : doctors.length === 0 && !doctorsError ? (
+                <p className="mt-1 text-xs text-amber-700">
+                  No active doctors are available. Ask an administrator to add doctors before registering a patient.
+                </p>
+              ) : null}
+              {errors.doctorId && (
+                <p className="mt-1 text-xs text-brand-error">{errors.doctorId}</p>
+              )}
             </div>
 
             {/* Blood Type */}
+            {user?.role !== 'receptionist' && (
+            <>
             <div>
               <label
                 htmlFor="bloodType"
@@ -687,6 +771,8 @@ export default function PatientFormPage() {
                 className="block w-full py-2 px-3 text-sm rounded-md border border-brand-border text-brand-text placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-brand-primary"
               />
             </div>
+            </>
+            )}
           </div>
         </div>
 

@@ -10,9 +10,10 @@ export class ApiError extends Error {
 }
 
 async function request(path, options = {}) {
+  const requestUrl = `${API_BASE_URL}${path}`;
   let response;
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
+    response = await fetch(requestUrl, {
       ...options,
       credentials: 'include',
       headers: {
@@ -22,6 +23,14 @@ async function request(path, options = {}) {
     });
   } catch (error) {
     if (error.name === 'AbortError') throw error;
+    if (import.meta.env.DEV && path === '/dashboard') {
+      console.error('[CareSync dashboard diagnostic]', {
+        url: requestUrl,
+        status: null,
+        message: 'Unable to reach the CareSync API.',
+        validationErrors: [],
+      });
+    }
     throw new ApiError('Unable to reach the CareSync API. Check the backend connection and try again.');
   }
 
@@ -33,6 +42,16 @@ async function request(path, options = {}) {
   }
 
   if (!response.ok) {
+    if (import.meta.env.DEV && path === '/dashboard') {
+      console.error('[CareSync dashboard diagnostic]', {
+        url: requestUrl,
+        status: response.status,
+        message: payload?.message || 'The CareSync API could not complete the request.',
+        validationErrors: Array.isArray(payload?.errors)
+          ? payload.errors.map(({ field, message }) => ({ field, message }))
+          : [],
+      });
+    }
     if (response.status === 401 && !path.startsWith('/auth/')) {
       window.dispatchEvent(new Event('caresync:session-expired'));
     }
@@ -42,12 +61,63 @@ async function request(path, options = {}) {
     });
   }
 
+  if (import.meta.env.DEV && path === '/dashboard') {
+    console.info('[CareSync dashboard diagnostic]', {
+      url: requestUrl,
+      status: response.status,
+    });
+  }
+
   return payload;
 }
 
 export async function listPatients(params, { signal } = {}) {
   const query = new URLSearchParams(params);
   return request(`/patients?${query}`, { signal });
+}
+
+export async function getDashboardSummary({ signal } = {}) {
+  const response = await request('/dashboard', { signal });
+  return response.data;
+}
+
+export async function listDoctors(params = {}, { signal } = {}) {
+  const query = new URLSearchParams(params);
+  return (await request(`/doctors?${query}`, { signal })).data;
+}
+
+export async function createDoctor(doctor) {
+  const response = await request('/doctors', {
+    method: 'POST',
+    body: JSON.stringify(doctor),
+  });
+  return response.data;
+}
+
+export async function updateDoctor(id, doctor) {
+  const response = await request(`/doctors/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(doctor),
+  });
+  return response.data;
+}
+
+export async function listStaffAccounts({ signal } = {}) {
+  return (await request('/staff', { signal })).data;
+}
+
+export async function createStaffAccount(account) {
+  return (await request('/staff', {
+    method: 'POST',
+    body: JSON.stringify(account),
+  })).data;
+}
+
+export async function updateStaffAccountStatus(id, isActive) {
+  return (await request(`/staff/${encodeURIComponent(id)}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ isActive }),
+  })).data;
 }
 
 export async function getPatient(id, { signal } = {}) {

@@ -9,6 +9,9 @@ import authRoutes from './routes/auth.routes.js';
 import patientRoutes from './routes/patient.routes.js';
 import medicalRecordRoutes from './routes/medical-record.routes.js';
 import appointmentRoutes from './routes/appointment.routes.js';
+import doctorRoutes from './routes/doctor.routes.js';
+import dashboardRoutes from './routes/dashboard.routes.js';
+import staffRoutes from './routes/staff.routes.js';
 import { notFound } from './middleware/notFound.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -81,6 +84,9 @@ app.use('/api/auth', authRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/medical-records', medicalRecordRoutes);
 app.use('/api/appointments', appointmentRoutes);
+app.use('/api/doctors', doctorRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/staff', staffRoutes);
 
 // 7. Not Found Handler
 app.use(notFound);

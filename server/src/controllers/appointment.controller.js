@@ -1,4 +1,5 @@
 import Patient from '../models/patient.model.js';
+import Doctor from '../models/doctor.model.js';
 
 function httpError(statusCode, message) {
   const error = new Error(message);
@@ -6,16 +7,22 @@ function httpError(statusCode, message) {
   return error;
 }
 
-function toResponse(appointment, patientName = `Patient ${appointment.patientId}`) {
+function toResponse(
+  appointment,
+  patientName = `Patient ${appointment.patientId}`,
+  doctorName = '',
+  role = ''
+) {
   return {
     id: String(appointment._id),
     patientId: appointment.patientId,
     patientName,
     date: appointment.date,
     time: appointment.time,
-    reason: appointment.reason,
+    reason: role === 'receptionist' ? 'Scheduled appointment' : appointment.reason,
     type: appointment.type,
-    assignedDoctor: appointment.assignedDoctor,
+    doctorId: appointment.doctor ? String(appointment.doctor) : '',
+    assignedDoctor: doctorName || appointment.assignedDoctor,
     room: appointment.room || '',
     status: appointment.status,
     createdAt: appointment.createdAt,
@@ -33,13 +40,15 @@ function escapeRegex(value) {
 
 export function createAppointmentController(
   Appointment,
-  PatientModel = Patient
+  PatientModel = Patient,
+  DoctorModel = Doctor
 ) {
   return {
     async list(req, res, next) {
       try {
         const { page, limit, patientId, status, from, to, search } = req.validatedQuery;
         const filter = { archivedAt: null };
+        if (req.auth.role === 'doctor') filter.doctor = req.auth.doctorId;
         if (patientId) filter.patientId = patientId;
         if (status) filter.status = status;
         if (from || to) {
@@ -83,11 +92,28 @@ export function createAppointmentController(
             `${patient.firstName} ${patient.lastName}`,
           ])
         );
+        const doctorIds = [...new Set(
+          appointments.map(({ doctor }) => doctor && String(doctor)).filter(Boolean)
+        )];
+        const doctors = doctorIds.length
+          ? await DoctorModel.find({ _id: { $in: doctorIds } })
+              .select('name')
+              .lean()
+              .exec()
+          : [];
+        const namesByDoctorId = new Map(
+          doctors.map((doctor) => [String(doctor._id), doctor.name])
+        );
 
         return res.json({
           success: true,
           data: appointments.map((appointment) =>
-            toResponse(appointment, namesByPatientId.get(appointment.patientId))
+            toResponse(
+              appointment,
+              namesByPatientId.get(appointment.patientId),
+              namesByDoctorId.get(String(appointment.doctor)),
+              req.auth.role
+            )
           ),
           pagination: { page, limit, total, pages: Math.ceil(total / limit) },
         });
@@ -99,12 +125,21 @@ export function createAppointmentController(
     async get(req, res, next) {
       try {
         const appointment = await Appointment.findOne(
-          activeAppointmentFilter(req.params.id)
+          {
+            ...activeAppointmentFilter(req.params.id),
+            ...(req.auth.role === 'doctor' ? { doctor: req.auth.doctorId } : {}),
+          }
         )
           .lean()
           .exec();
         if (!appointment) throw httpError(404, 'Appointment not found');
-        return res.json({ success: true, data: toResponse(appointment) });
+        const doctor = appointment.doctor
+          ? await DoctorModel.findById(appointment.doctor).select('name').lean().exec()
+          : null;
+        return res.json({
+          success: true,
+          data: toResponse(appointment, undefined, doctor?.name, req.auth.role),
+        });
       } catch (error) {
         return next(error);
       }
@@ -115,20 +150,38 @@ export function createAppointmentController(
         const patient = await PatientModel.findOne({
           patientId: req.validatedBody.patientId,
           archivedAt: null,
+          ...(req.auth.role === 'doctor' ? { doctor: req.auth.doctorId } : {}),
         })
           .select('patientId')
           .lean()
           .exec();
         if (!patient) throw httpError(404, 'Active patient not found');
 
+        const { doctorId, ...fields } = req.validatedBody;
+        let doctor = null;
+        if (req.auth.role === 'doctor' && doctorId !== req.auth.doctorId) {
+          throw httpError(403, 'Doctors may schedule appointments only under their linked profile');
+        }
+        if (doctorId) {
+          doctor = await DoctorModel.findOne({ _id: doctorId, active: true })
+            .select('name')
+            .lean()
+            .exec();
+          if (!doctor) throw httpError(400, 'Selected doctor is not active');
+          fields.assignedDoctor = doctor.name;
+        }
         const appointment = await Appointment.create({
-          ...req.validatedBody,
+          ...fields,
+          ...(doctorId ? { doctor: doctorId } : {}),
           status: 'Scheduled',
           archivedAt: null,
         });
         return res
           .status(201)
-          .json({ success: true, data: toResponse(appointment) });
+          .json({
+            success: true,
+            data: toResponse(appointment, undefined, doctor?.name, req.auth.role),
+          });
       } catch (error) {
         return next(error);
       }
@@ -137,26 +190,50 @@ export function createAppointmentController(
     async update(req, res, next) {
       try {
         const updates = req.validatedBody;
+        const { doctorId, ...fields } = updates;
+        if (req.auth.role === 'doctor' && doctorId && doctorId !== req.auth.doctorId) {
+          throw httpError(403, 'Doctors may assign appointments only to their linked profile');
+        }
         if (updates.patientId) {
           const patient = await PatientModel.findOne({
             patientId: updates.patientId,
             archivedAt: null,
+            ...(req.auth.role === 'doctor' ? { doctor: req.auth.doctorId } : {}),
           })
             .select('patientId')
             .lean()
             .exec();
           if (!patient) throw httpError(404, 'Active patient not found');
         }
+        let doctor = null;
+        if (doctorId) {
+          doctor = await DoctorModel.findOne({ _id: doctorId, active: true })
+            .select('name')
+            .lean()
+            .exec();
+          if (!doctor) throw httpError(400, 'Selected doctor is not active');
+          fields.doctor = doctorId;
+          fields.assignedDoctor = doctor.name;
+        }
 
         const appointment = await Appointment.findOneAndUpdate(
-          activeAppointmentFilter(req.params.id),
-          { $set: updates },
+          {
+            ...activeAppointmentFilter(req.params.id),
+            ...(req.auth.role === 'doctor' ? { doctor: req.auth.doctorId } : {}),
+          },
+          { $set: fields },
           { new: true, runValidators: true }
         )
           .lean()
           .exec();
         if (!appointment) throw httpError(404, 'Appointment not found');
-        return res.json({ success: true, data: toResponse(appointment) });
+        if (!doctor && appointment.doctor) {
+          doctor = await DoctorModel.findById(appointment.doctor).select('name').lean().exec();
+        }
+        return res.json({
+          success: true,
+          data: toResponse(appointment, undefined, doctor?.name, req.auth.role),
+        });
       } catch (error) {
         return next(error);
       }

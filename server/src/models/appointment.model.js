@@ -8,6 +8,7 @@ const appointmentSchema = new mongoose.Schema(
     reason: { type: String, required: true, trim: true, maxlength: 1000 },
     type: { type: String, required: true, trim: true, maxlength: 120 },
     assignedDoctor: { type: String, required: true, trim: true, maxlength: 120 },
+    doctor: { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor', default: null },
     room: { type: String, trim: true, maxlength: 80, default: '' },
     status: {
       type: String,

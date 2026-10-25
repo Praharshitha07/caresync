@@ -53,6 +53,7 @@ const patientSchema = new mongoose.Schema(
     },
     allergies: { type: String, trim: true, maxlength: 1000, default: '' },
     archivedAt: { type: Date, default: null, select: false },
+    doctor: { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor', default: null },
   },
   {
     timestamps: true,
@@ -63,6 +64,7 @@ const patientSchema = new mongoose.Schema(
 patientSchema.index({ patientId: 1 }, { unique: true });
 patientSchema.index({ archivedAt: 1, createdAt: -1 });
 patientSchema.index({ archivedAt: 1, firstName: 1, lastName: 1 });
+patientSchema.index({ doctor: 1 });
 
 const Patient =
   mongoose.models.Patient || mongoose.model('Patient', patientSchema);

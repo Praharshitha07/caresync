@@ -26,7 +26,10 @@ import { useAuth } from '../context/AuthContext';
 export default function PatientsPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const canManagePatients = ['admin', 'clinician', 'nurse'].includes(user?.role);
+  const canManagePatients = ['admin', 'doctor', 'clinician', 'nurse', 'receptionist'].includes(user?.role);
+  const canViewPatientDetails = user?.role !== 'receptionist';
+  const canEditPatients = ['admin', 'doctor', 'clinician', 'nurse'].includes(user?.role);
+  const canEditDemographics = user?.role === 'receptionist';
   const canArchivePatients = user?.role === 'admin';
   const [patients, setPatients] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -289,8 +292,9 @@ export default function PatientsPage() {
                   <tr>
                     <th scope="col" className="px-4 py-3">Patient ID</th>
                     <th scope="col" className="px-4 py-3">Patient Name</th>
-                    <th scope="col" className="px-4 py-3">Date of Birth</th>
+                    {canViewPatientDetails && <th scope="col" className="px-4 py-3">Date of Birth</th>}
                     <th scope="col" className="px-4 py-3">Contact Information</th>
+                    <th scope="col" className="px-4 py-3">Attending Doctor</th>
                     <th scope="col" className="px-4 py-3">Registration Date</th>
                     <th scope="col" className="px-4 py-3 text-right">Actions</th>
                   </tr>
@@ -303,33 +307,40 @@ export default function PatientsPage() {
                     >
                       {/* Patient ID */}
                       <td className="px-4 py-3.5 whitespace-nowrap">
-                        <Link
-                          to={`/patients/${patient.id}`}
-                          className="font-mono text-xs font-semibold text-brand-primary bg-teal-50 px-2 py-0.5 rounded border border-teal-200 hover:bg-teal-100 transition-colors"
-                        >
-                          {patient.id}
-                        </Link>
+                        {canViewPatientDetails ? (
+                          <Link
+                            to={`/patients/${patient.id}`}
+                            className="font-mono text-xs font-semibold text-brand-primary bg-teal-50 px-2 py-0.5 rounded border border-teal-200 hover:bg-teal-100 transition-colors"
+                          >
+                            {patient.id}
+                          </Link>
+                        ) : (
+                          <span className="font-mono text-xs font-semibold text-brand-text">{patient.id}</span>
+                        )}
                       </td>
 
                       {/* Name, Age, Gender */}
                       <td className="px-4 py-3.5 whitespace-nowrap">
                         <div className="font-medium text-brand-text">
-                          <Link
-                            to={`/patients/${patient.id}`}
-                            className="hover:text-brand-primary transition-colors"
-                          >
-                            {patient.name}
-                          </Link>
+                          {canViewPatientDetails ? (
+                            <Link to={`/patients/${patient.id}`} className="hover:text-brand-primary transition-colors">
+                              {patient.name}
+                            </Link>
+                          ) : patient.name}
                         </div>
-                        <div className="text-xs text-brand-muted">
-                          {patient.age} yrs • {patient.gender}
-                        </div>
+                        {canViewPatientDetails && (
+                          <div className="text-xs text-brand-muted">
+                            {patient.age} yrs • {patient.gender}
+                          </div>
+                        )}
                       </td>
 
                       {/* Date of Birth */}
-                      <td className="px-4 py-3.5 whitespace-nowrap text-xs text-slate-600">
-                        {patient.dob || '—'}
-                      </td>
+                      {canViewPatientDetails && (
+                        <td className="px-4 py-3.5 whitespace-nowrap text-xs text-slate-600">
+                          {patient.dob || '—'}
+                        </td>
+                      )}
 
                       {/* Contact Info */}
                       <td className="px-4 py-3.5 whitespace-nowrap">
@@ -343,6 +354,10 @@ export default function PatientsPage() {
                         )}
                       </td>
 
+                      <td className="px-4 py-3.5 whitespace-nowrap text-xs text-slate-600">
+                        {patient.doctorName || 'Not assigned'}
+                      </td>
+
                       {/* Registration Date */}
                       <td className="px-4 py-3.5 whitespace-nowrap text-xs text-slate-600">
                         {patient.formattedRegDate || patient.registrationDate}
@@ -351,7 +366,7 @@ export default function PatientsPage() {
                       {/* Actions */}
                       <td className="px-4 py-3.5 whitespace-nowrap text-right text-xs">
                         <div className="flex items-center justify-end gap-1.5">
-                          <button
+                          {canViewPatientDetails && <button
                             type="button"
                             onClick={() => navigate(`/patients/${patient.id}`)}
                             title="View Patient Dossier"
@@ -359,14 +374,25 @@ export default function PatientsPage() {
                             aria-label={`View record for ${patient.name}`}
                           >
                             <Eye className="h-4 w-4" />
-                          </button>
-                          {canManagePatients && (
+                          </button>}
+                          {canEditPatients && (
                             <button
                               type="button"
                               onClick={() => navigate(`/patients/${patient.id}/edit`)}
                               title="Edit Patient Profile"
                               className="p-1.5 text-slate-600 hover:text-brand-primary hover:bg-slate-100 rounded transition-colors"
                               aria-label={`Edit ${patient.name}`}
+                            >
+                              <Edit2 className="h-4 w-4" />
+                            </button>
+                          )}
+                          {canEditDemographics && (
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/patients/${patient.id}/edit-demographics`)}
+                              title="Edit Patient Demographics"
+                              className="p-1.5 text-slate-600 hover:text-brand-primary hover:bg-slate-100 rounded transition-colors"
+                              aria-label={`Edit demographics for ${patient.name}`}
                             >
                               <Edit2 className="h-4 w-4" />
                             </button>

@@ -8,6 +8,7 @@ import {
   CalendarPlus,
   ChevronLeft,
   ChevronRight,
+  UserRoundPen,
 } from 'lucide-react';
 import PageContainer from '../components/PageContainer';
 import StatCard from '../components/StatCard';
@@ -25,6 +26,7 @@ import {
   archiveAppointment,
   createAppointment,
   listAppointments,
+  listDoctors,
   listPatients,
   updateAppointment,
 } from '../services/api';
@@ -32,10 +34,14 @@ import {
 export default function AppointmentsPage() {
   const location = useLocation();
   const { user } = useAuth();
-  const canUpdate = ['admin', 'clinician', 'nurse'].includes(user?.role);
+  const canUpdate = ['admin', 'doctor', 'clinician', 'nurse'].includes(user?.role);
   const canArchive = user?.role === 'admin';
   const [appointments, setAppointments] = useState([]);
   const [patients, setPatients] = useState([]);
+  const [doctors, setDoctors] = useState([]);
+  const [doctorsLoading, setDoctorsLoading] = useState(true);
+  const [doctorLoadError, setDoctorLoadError] = useState('');
+  const [doctorsLoadKey, setDoctorsLoadKey] = useState(0);
   const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0 });
   const [currentPage, setCurrentPage] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
@@ -59,7 +65,8 @@ export default function AppointmentsPage() {
     time: '10:00 AM',
     reason: '',
     type: 'Clinical Consultation',
-    assignedDoctor: 'Dr. Sarah Jenkins',
+    assignedDoctor: '',
+    doctorId: '',
     room: 'Consultation Suite 1',
   });
   const [scheduleErrors, setScheduleErrors] = useState({});
@@ -68,6 +75,34 @@ export default function AppointmentsPage() {
   // Cancel confirmation state
   const [appointmentToCancel, setAppointmentToCancel] = useState(null);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [appointmentForDoctorChange, setAppointmentForDoctorChange] = useState(null);
+  const [selectedDoctorId, setSelectedDoctorId] = useState('');
+  const [isSavingDoctor, setIsSavingDoctor] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setDoctorsLoading(true);
+    setDoctorLoadError('');
+    listDoctors({}, { signal: controller.signal })
+      .then((activeDoctors) => {
+        const availableDoctors = user?.role === 'doctor'
+          ? activeDoctors.filter((doctor) => doctor.id === user.doctorId)
+          : activeDoctors;
+        setDoctors(availableDoctors);
+        setScheduleData((previous) => ({
+          ...previous,
+          assignedDoctor: previous.assignedDoctor || availableDoctors[0]?.name || '',
+          doctorId: previous.doctorId || availableDoctors[0]?.id || '',
+        }));
+      })
+      .catch((error) => {
+        if (error.name !== 'AbortError') setDoctorLoadError(error.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setDoctorsLoading(false);
+      });
+    return () => controller.abort();
+  }, [doctorsLoadKey, user?.doctorId, user?.role]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -162,6 +197,7 @@ export default function AppointmentsPage() {
     if (!scheduleData.date) errs.date = 'Appointment date is required.';
     if (!scheduleData.time) errs.time = 'Appointment time is required.';
     if (!scheduleData.reason.trim()) errs.reason = 'Reason or clinical consult type is required.';
+    if (!scheduleData.doctorId) errs.assignedDoctor = 'Select an active doctor.';
     setScheduleErrors(errs);
     return Object.keys(errs).length === 0;
   };
@@ -228,6 +264,35 @@ export default function AppointmentsPage() {
       setActionError(error.status === 403
         ? 'Your account does not have permission to update appointment status.'
         : error.message);
+    }
+  };
+
+  const handleDoctorChange = async (event) => {
+    event.preventDefault();
+    if (!appointmentForDoctorChange || isSavingDoctor) return;
+    const doctor = doctors.find(({ id }) => id === selectedDoctorId);
+    if (!doctor) {
+      setActionError('Select an active doctor before updating the appointment.');
+      return;
+    }
+
+    setActionError('');
+    setIsSavingDoctor(true);
+    try {
+      await updateAppointment(appointmentForDoctorChange.id, {
+        doctorId: doctor.id,
+        assignedDoctor: doctor.name,
+      });
+      setAppointmentForDoctorChange(null);
+      setFeedbackMessage(`Assigned doctor updated for appointment ${appointmentForDoctorChange.id}.`);
+      setLoadKey((key) => key + 1);
+      setTimeout(() => setFeedbackMessage(null), 4000);
+    } catch (error) {
+      setActionError(error.status === 403
+        ? 'Your account does not have permission to update this appointment.'
+        : error.message);
+    } finally {
+      setIsSavingDoctor(false);
     }
   };
 
@@ -462,6 +527,23 @@ export default function AppointmentsPage() {
                             Complete
                           </button>
                         )}
+                        {canUpdate && ['Scheduled', 'Confirmed'].includes(apt.status) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAppointmentForDoctorChange(apt);
+                              setSelectedDoctorId(
+                                doctors.some(({ id }) => id === apt.doctorId) ? apt.doctorId : ''
+                              );
+                              setActionError('');
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-brand-primary bg-teal-50 hover:bg-teal-100 rounded border border-teal-200 transition-colors"
+                            aria-label={`Change doctor for appointment with ${apt.patientName}`}
+                          >
+                            <UserRoundPen className="h-3 w-3" aria-hidden="true" />
+                            Change Doctor
+                          </button>
+                        )}
                         {canArchive && apt.status !== 'Cancelled' && apt.status !== 'Completed' && (
                           <button
                             type="button"
@@ -667,15 +749,44 @@ export default function AppointmentsPage() {
               </label>
               <select
                 id="sched-doctor"
-                value={scheduleData.assignedDoctor}
-                onChange={(e) => setScheduleData((prev) => ({ ...prev, assignedDoctor: e.target.value }))}
+                value={scheduleData.doctorId}
+                disabled={!doctors.length || doctorsLoading || Boolean(doctorLoadError) || isSubmittingSchedule}
+                onChange={(e) => {
+                  const doctor = doctors.find(({ id }) => id === e.target.value);
+                  setScheduleData((prev) => ({
+                    ...prev,
+                    doctorId: doctor?.id || '',
+                    assignedDoctor: doctor?.name || '',
+                  }));
+                }}
                 className="block w-full py-2 px-3 text-xs rounded-md border border-brand-border bg-white text-brand-text focus:outline-none focus:ring-1 focus:ring-brand-primary"
               >
-                <option value="Dr. Sarah Jenkins">Dr. Sarah Jenkins</option>
-                <option value="Dr. Robert Chen">Dr. Robert Chen</option>
-                <option value="Dr. Maya Patel">Dr. Maya Patel</option>
-                <option value="Dr. Gregory House">Dr. Gregory House</option>
+                <option value="">
+                  {doctorsLoading
+                    ? 'Loading doctors...'
+                    : doctorLoadError
+                      ? 'Unable to load doctors'
+                      : doctors.length
+                        ? 'Select a doctor'
+                        : 'No active doctors'}
+                </option>
+                {doctors.map((doctor) => (
+                  <option key={doctor.id} value={doctor.id}>
+                    {doctor.name} ({doctor.specialty})
+                  </option>
+                ))}
               </select>
+              {doctorLoadError && (
+                <p role="alert" className="mt-1 text-xs text-brand-error">{doctorLoadError}</p>
+              )}
+              {!doctorsLoading && !doctorLoadError && !doctors.length && (
+                <p className="mt-1 text-xs text-amber-700">
+                  Add an active doctor before scheduling appointments.
+                </p>
+              )}
+              {scheduleErrors.assignedDoctor && (
+                <p className="mt-1 text-xs text-brand-error">{scheduleErrors.assignedDoctor}</p>
+              )}
             </div>
           </div>
 
@@ -694,6 +805,74 @@ export default function AppointmentsPage() {
               disabled={isSubmittingSchedule || patients.length === 0}
             >
               Book Appointment
+            </PrimaryButton>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(appointmentForDoctorChange)}
+        onClose={() => {
+          if (!isSavingDoctor) setAppointmentForDoctorChange(null);
+        }}
+        title="Change Assigned Doctor"
+        subtitle={`Select an active clinician for appointment ${appointmentForDoctorChange?.id || ''}.`}
+      >
+        <form onSubmit={handleDoctorChange} className="space-y-4">
+          {appointmentForDoctorChange && !selectedDoctorId && appointmentForDoctorChange.assignedDoctor && (
+            <p className="text-xs text-brand-muted">
+              Current assignment: {appointmentForDoctorChange.assignedDoctor}
+            </p>
+          )}
+          {doctorLoadError ? (
+            <div className="space-y-2">
+              <p role="alert" className="text-sm text-brand-error">
+                Active doctors could not be loaded: {doctorLoadError}
+              </p>
+              <SecondaryButton
+                size="sm"
+                onClick={() => setDoctorsLoadKey((key) => key + 1)}
+                disabled={doctorsLoading}
+              >
+                Retry loading doctors
+              </SecondaryButton>
+            </div>
+          ) : doctors.length === 0 ? (
+            <p className="text-sm text-amber-800">
+              No active doctors are available. Ask an administrator to activate a doctor profile.
+            </p>
+          ) : (
+            <label className="block text-xs font-semibold text-brand-text">
+              Active doctor
+              <select
+                value={selectedDoctorId}
+                onChange={(event) => setSelectedDoctorId(event.target.value)}
+                disabled={isSavingDoctor}
+                className="mt-1 block w-full rounded-md border border-brand-border bg-white px-3 py-2 text-sm font-normal"
+              >
+                <option value="">Select an active doctor</option>
+                {doctors.map((doctor) => (
+                  <option key={doctor.id} value={doctor.id}>
+                    {doctor.name} ({doctor.specialty})
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {actionError && <p role="alert" className="text-xs text-brand-error">{actionError}</p>}
+          <div className="flex justify-end gap-2 border-t border-brand-border pt-4">
+            <SecondaryButton
+              onClick={() => setAppointmentForDoctorChange(null)}
+              disabled={isSavingDoctor}
+            >
+              Cancel
+            </SecondaryButton>
+            <PrimaryButton
+              type="submit"
+              isLoading={isSavingDoctor}
+              disabled={!selectedDoctorId || doctors.length === 0 || Boolean(doctorLoadError)}
+            >
+              Save Assignment
             </PrimaryButton>
           </div>
         </form>

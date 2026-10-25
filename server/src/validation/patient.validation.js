@@ -36,14 +36,42 @@ const patientFields = {
   room: optionalText(80),
   bloodType: z.enum(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', 'Unknown']).optional(),
   allergies: optionalText(1000),
+  doctorId: z.string().regex(/^[a-f\d]{24}$/i, 'A valid doctor is required'),
 };
 
 export const createPatientSchema = z.object(patientFields).strict();
+export const createReceptionistPatientSchema = z
+  .object({
+    firstName: patientFields.firstName,
+    lastName: patientFields.lastName,
+    dob: patientFields.dob,
+    gender: patientFields.gender,
+    phone: patientFields.phone,
+    email: patientFields.email,
+    address: patientFields.address,
+    emergencyContact: patientFields.emergencyContact,
+    doctorId: patientFields.doctorId,
+  })
+  .strict();
 export const updatePatientSchema = z
   .object(patientFields)
   .partial()
   .strict()
   .refine((value) => Object.keys(value).length > 0, 'At least one patient field is required');
+
+export const updateReceptionistPatientSchema = z
+  .object({
+    firstName: patientFields.firstName.optional(),
+    lastName: patientFields.lastName.optional(),
+    dob: patientFields.dob.optional(),
+    gender: patientFields.gender.optional(),
+    phone: patientFields.phone.optional(),
+    email: patientFields.email,
+    address: patientFields.address,
+    emergencyContact: patientFields.emergencyContact,
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, 'At least one demographic field is required');
 
 export const listPatientsSchema = z
   .object({

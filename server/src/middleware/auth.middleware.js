@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { env } from '../config/env.js';
+import Doctor from '../models/doctor.model.js';
 
 export const SESSION_COOKIE_NAME = 'caresync_session';
 
@@ -43,7 +44,7 @@ export function createRequireAuthentication(SessionModel) {
         tokenHash,
         expiresAt: { $gt: new Date() },
       })
-        .populate('userId', 'email displayName role isActive')
+        .populate('userId', 'email displayName role isActive doctor')
         .exec();
 
       if (!session?.userId?.isActive) return unauthorized(res);
@@ -53,6 +54,7 @@ export function createRequireAuthentication(SessionModel) {
         email: session.userId.email,
         displayName: session.userId.displayName,
         role: session.userId.role,
+        doctorId: session.userId.doctor ? String(session.userId.doctor) : '',
       };
 
       if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
@@ -86,6 +88,37 @@ export function requireRoles(...roles) {
         message: 'Your role is not authorized for this operation',
       });
     }
+
     return next();
+  };
+}
+
+export function createRequireDoctorProfile(DoctorModel = Doctor) {
+  return async function requireDoctorProfile(req, res, next) {
+    if (req.auth?.role !== 'doctor') return next();
+    if (!req.auth.doctorId) {
+      return res.status(403).json({
+        success: false,
+        message: 'This doctor account is not linked to an active doctor profile',
+      });
+    }
+    try {
+      const doctor = await DoctorModel.findOne({
+        _id: req.auth.doctorId,
+        active: true,
+      })
+        .select('_id')
+        .lean()
+        .exec();
+      if (!doctor) {
+        return res.status(403).json({
+          success: false,
+          message: 'This doctor account is not linked to an active doctor profile',
+        });
+      }
+      return next();
+    } catch (error) {
+      return next(error);
+    }
   };
 }

@@ -6,19 +6,12 @@ import {
   FileText,
   Calendar,
   Settings,
+  Stethoscope,
   LogOut,
   Activity,
   X,
   ShieldCheck,
 } from 'lucide-react';
-
-const NAV_ITEMS = [
-  { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
-  { name: 'Patients', path: '/patients', icon: Users },
-  { name: 'Medical Records', path: '/medical-records', icon: FileText },
-  { name: 'Appointments', path: '/appointments', icon: Calendar },
-  { name: 'Settings', path: '/settings', icon: Settings },
-];
 
 export default function AppSidebar({
   mobileOpen = false,
@@ -26,6 +19,24 @@ export default function AppSidebar({
   onLogout,
   currentUser,
 }) {
+  const navItems = [
+    ...(currentUser?.role !== 'receptionist'
+      ? [{ name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard }]
+      : []),
+    { name: 'Patients', path: '/patients', icon: Users },
+    ...(currentUser?.role !== 'receptionist'
+      ? [{ name: 'Medical Records', path: '/medical-records', icon: FileText }]
+      : []),
+    { name: 'Appointments', path: '/appointments', icon: Calendar },
+    ...(currentUser?.role === 'admin'
+      ? [
+          { name: 'Doctors', path: '/doctors', icon: Stethoscope },
+          { name: 'Staff', path: '/staff', icon: Users },
+        ]
+      : []),
+    { name: 'Settings', path: '/settings', icon: Settings },
+  ];
+
   return (
     <>
       {/* Mobile backdrop */}
@@ -76,7 +87,7 @@ export default function AppSidebar({
 
           {/* Navigation Links */}
           <nav className="p-3 space-y-1.5" aria-label="Main Navigation">
-            {NAV_ITEMS.map((item) => {
+            {navItems.map((item) => {
               const Icon = item.icon;
               return (
                 <NavLink

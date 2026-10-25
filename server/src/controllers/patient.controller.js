@@ -2,7 +2,15 @@ import mongoose from 'mongoose';
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-function toPatientResponse(patient, { summary = false } = {}) {
+export function toPatientResponse(
+  patient,
+  {
+    summary = false,
+    receptionist = false,
+    includeDemographics = false,
+    doctorName = '',
+  } = {}
+) {
   const patientId = patient.patientId;
   const [year, month, day] = patient.dob.split('-').map(Number);
   const today = new Date();
@@ -15,6 +23,33 @@ function toPatientResponse(patient, { summary = false } = {}) {
   }
 
   const registrationDate = patient.createdAt.toISOString().slice(0, 10);
+  if (receptionist) {
+    return {
+      id: patientId,
+      patientId,
+      firstName: patient.firstName,
+      lastName: patient.lastName,
+      name: `${patient.firstName} ${patient.lastName}`,
+      phone: patient.phone,
+      email: patient.email || '',
+      ...(includeDemographics && {
+        dob: patient.dob,
+        gender: patient.gender,
+        address: patient.address || '',
+        emergencyContact: patient.emergencyContact || {},
+      }),
+      doctorName: doctorName || '',
+      registrationDate,
+      formattedRegDate: new Date(`${registrationDate}T00:00:00.000Z`).toLocaleDateString(
+        'en-US',
+        { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }
+      ),
+      status: patient.status,
+      createdAt: patient.createdAt,
+      updatedAt: patient.updatedAt,
+    };
+  }
+
   return {
     id: patientId,
     patientId,
@@ -40,6 +75,9 @@ function toPatientResponse(patient, { summary = false } = {}) {
       { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }
     ),
     status: patient.status,
+    doctorId: patient.doctor ? String(patient.doctor) : '',
+    doctorName: doctorName || patient.primaryPhysician || '',
+    primaryPhysician: doctorName || patient.primaryPhysician || '',
     statusVariant:
       patient.status === 'Admitted'
         ? 'success'
@@ -69,12 +107,37 @@ function patientFilter(identifier) {
   return { _id: identifier, archivedAt: null };
 }
 
-export function createPatientController(Patient) {
+async function doctorForId(Doctor, id) {
+  if (!id) return null;
+  return Doctor.findOne({ _id: id }).select('name active').lean().exec();
+}
+
+async function toPatientResponses(
+  patients,
+  Doctor,
+  { summary = false, receptionist = false } = {}
+) {
+  const doctorIds = [...new Set(patients.map(({ doctor }) => doctor && String(doctor)).filter(Boolean))];
+  const doctors = doctorIds.length
+    ? await Doctor.find({ _id: { $in: doctorIds } }).select('name').lean().exec()
+    : [];
+  const names = new Map(doctors.map((doctor) => [String(doctor._id), doctor.name]));
+  return patients.map((patient) =>
+    toPatientResponse(patient, {
+      summary,
+      receptionist,
+      doctorName: names.get(String(patient.doctor)) || '',
+    })
+  );
+}
+
+export function createPatientController(Patient, Doctor) {
   return {
     async list(req, res, next) {
       try {
         const { page, limit, search, status, registered, sort, order } = req.validatedQuery;
         const filter = { archivedAt: null };
+        if (req.auth.role === 'doctor') filter.doctor = req.auth.doctorId;
         if (status) filter.status = status;
         if (registered !== 'all') {
           const days = registered === 'last7' ? 7 : 30;
@@ -108,20 +171,30 @@ export function createPatientController(Patient) {
         const recentSince = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
         const [patients, total, activeTotal, recentCount] = await Promise.all([
           Patient.find(filter)
-            .select('patientId firstName lastName dob gender phone email status createdAt updatedAt')
+            .select('patientId firstName lastName dob gender phone email status doctor primaryPhysician createdAt updatedAt')
             .sort(sortOptions)
             .skip((page - 1) * limit)
             .limit(limit)
             .lean()
             .exec(),
           Patient.countDocuments(filter),
-          Patient.countDocuments({ archivedAt: null }),
-          Patient.countDocuments({ archivedAt: null, createdAt: { $gte: recentSince } }),
+          Patient.countDocuments({
+            archivedAt: null,
+            ...(req.auth.role === 'doctor' ? { doctor: req.auth.doctorId } : {}),
+          }),
+          Patient.countDocuments({
+            archivedAt: null,
+            ...(req.auth.role === 'doctor' ? { doctor: req.auth.doctorId } : {}),
+            createdAt: { $gte: recentSince },
+          }),
         ]);
 
         return res.json({
           success: true,
-          data: patients.map((patient) => toPatientResponse(patient, { summary: true })),
+          data: await toPatientResponses(patients, Doctor, {
+            summary: true,
+            receptionist: req.auth.role === 'receptionist',
+          }),
           pagination: {
             page,
             limit,
@@ -138,9 +211,20 @@ export function createPatientController(Patient) {
 
     async get(req, res, next) {
       try {
-        const patient = await Patient.findOne(patientFilter(req.params.id)).lean().exec();
+        const patient = await Patient.findOne({
+          ...patientFilter(req.params.id),
+          ...(req.auth.role === 'doctor' ? { doctor: req.auth.doctorId } : {}),
+        }).lean().exec();
         if (!patient) throw httpError(404, 'Patient not found');
-        return res.json({ success: true, data: toPatientResponse(patient) });
+        const doctor = await doctorForId(Doctor, patient.doctor);
+        return res.json({
+          success: true,
+          data: toPatientResponse(patient, {
+            receptionist: req.auth.role === 'receptionist',
+            includeDemographics: req.auth.role === 'receptionist',
+            doctorName: doctor?.name || '',
+          }),
+        });
       } catch (error) {
         return next(error);
       }
@@ -148,8 +232,20 @@ export function createPatientController(Patient) {
 
     async create(req, res, next) {
       try {
-        const patient = await Patient.create(req.validatedBody);
-        return res.status(201).json({ success: true, data: toPatientResponse(patient) });
+        const { doctorId, ...fields } = req.validatedBody;
+        if (req.auth.role === 'doctor' && doctorId !== req.auth.doctorId) {
+          throw httpError(403, 'Doctors may register patients only to their linked profile');
+        }
+        const doctor = await doctorForId(Doctor, doctorId);
+        if (!doctor || !doctor.active) throw httpError(400, 'Selected doctor is not active');
+        const patient = await Patient.create({ ...fields, doctor: doctorId });
+        return res.status(201).json({
+          success: true,
+          data: toPatientResponse(patient, {
+            doctorName: doctor.name,
+            receptionist: req.auth.role === 'receptionist',
+          }),
+        });
       } catch (error) {
         return next(error);
       }
@@ -157,15 +253,43 @@ export function createPatientController(Patient) {
 
     async update(req, res, next) {
       try {
+        const { doctorId, ...fields } = req.validatedBody;
+        if (req.auth.role === 'receptionist' && doctorId) {
+          throw httpError(403, 'Receptionists cannot change a patient’s doctor assignment');
+        }
+        if (req.auth.role === 'doctor' && doctorId && doctorId !== req.auth.doctorId) {
+          throw httpError(403, 'Doctors may assign patients only to their linked profile');
+        }
+        let doctorName = '';
+        if (doctorId) {
+          const doctor = await doctorForId(Doctor, doctorId);
+          if (!doctor || !doctor.active) throw httpError(400, 'Selected doctor is not active');
+          doctorName = doctor.name;
+          fields.doctor = doctorId;
+        }
         const patient = await Patient.findOneAndUpdate(
-          patientFilter(req.params.id),
-          { $set: req.validatedBody },
+          {
+            ...patientFilter(req.params.id),
+            ...(req.auth.role === 'doctor' ? { doctor: req.auth.doctorId } : {}),
+          },
+          { $set: fields },
           { new: true, runValidators: true }
         )
           .lean()
           .exec();
         if (!patient) throw httpError(404, 'Patient not found');
-        return res.json({ success: true, data: toPatientResponse(patient) });
+        if (!doctorName && patient.doctor) {
+          const doctor = await doctorForId(Doctor, patient.doctor);
+          doctorName = doctor?.name || '';
+        }
+        return res.json({
+          success: true,
+          data: toPatientResponse(patient, {
+            receptionist: req.auth.role === 'receptionist',
+            includeDemographics: req.auth.role === 'receptionist',
+            doctorName,
+          }),
+        });
       } catch (error) {
         return next(error);
       }

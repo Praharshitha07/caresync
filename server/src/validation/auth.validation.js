@@ -9,3 +9,26 @@ export const loginSchema = z
       .refine((password) => Buffer.byteLength(password, 'utf8') <= 72),
   })
   .strict();
+
+export const resetPasswordParamsSchema = z
+  .object({
+    id: z.string().regex(/^[a-f\d]{24}$/i, 'A valid user ID is required'),
+  })
+  .strict();
+
+export const resetPasswordSchema = z
+  .object({
+    newPassword: z
+      .string()
+      .min(12, 'Password must be at least 12 characters')
+      .refine(
+        (password) => Buffer.byteLength(password, 'utf8') <= 72,
+        'Password must be no more than 72 UTF-8 bytes'
+      ),
+    confirmPassword: z.string().min(1),
+  })
+  .strict()
+  .refine((value) => value.newPassword === value.confirmPassword, {
+    message: 'Passwords do not match',
+    path: ['confirmPassword'],
+  });

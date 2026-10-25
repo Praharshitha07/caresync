@@ -3,6 +3,7 @@ import { stdin, stdout } from 'node:process';
 import bcrypt from 'bcryptjs';
 import { connectDatabase, disconnectDatabase } from '../config/database.js';
 import User, { USER_ROLES, ensureUserIndexes } from '../models/user.model.js';
+import Doctor from '../models/doctor.model.js';
 
 function parseArguments(args) {
   const options = Object.fromEntries(
@@ -16,9 +17,15 @@ function parseArguments(args) {
       })
   );
 
-  if (!options.email || !options.role || !USER_ROLES.includes(options.role)) {
+  if (
+    !options.email ||
+    !options.role ||
+    !USER_ROLES.includes(options.role) ||
+    (options.role === 'doctor' && !/^[a-f\d]{24}$/i.test(options.doctorId || '')) ||
+    (options.role !== 'doctor' && options.doctorId)
+  ) {
     throw new Error(
-      `Usage: npm run users:create -- --email=staff@hospital.org --role=${USER_ROLES.join('|')}`
+      `Usage: npm run users:create -- --email=staff@hospital.org --role=${USER_ROLES.join('|')} [--doctorId=24-character-id for doctor role]`
     );
   }
 
@@ -27,7 +34,7 @@ function parseArguments(args) {
     throw new Error('A valid staff email address is required.');
   }
 
-  return { email, role: options.role };
+  return { email, role: options.role, doctorId: options.doctorId };
 }
 
 function readHidden(prompt) {
@@ -72,7 +79,7 @@ function readHidden(prompt) {
 }
 
 async function createUser() {
-  const { email, role } = parseArguments(process.argv.slice(2));
+  const { email, role, doctorId } = parseArguments(process.argv.slice(2));
   const prompt = readline.createInterface({ input: stdin, output: stdout });
 
   try {
@@ -80,6 +87,16 @@ async function createUser() {
     await ensureUserIndexes();
     const existing = await User.findOne({ email }).select('_id').exec();
     if (existing) throw new Error('An account already exists for that email address.');
+    let doctor = null;
+    if (role === 'doctor') {
+      doctor = await Doctor.findOne({ _id: doctorId, active: true })
+        .select('_id')
+        .lean()
+        .exec();
+      if (!doctor) throw new Error('The doctor profile must exist and be active.');
+      const linkedAccount = await User.findOne({ doctor: doctorId }).select('_id').exec();
+      if (linkedAccount) throw new Error('That doctor profile already has a linked account.');
+    }
 
     const displayName = (await prompt.question('Staff display name: ')).trim();
     prompt.close();
@@ -98,6 +115,7 @@ async function createUser() {
       email,
       displayName,
       role,
+      ...(doctor ? { doctor: doctor._id } : {}),
       passwordHash: await bcrypt.hash(password, 12),
     });
     console.log(`Created ${role} account.`);
@@ -117,6 +135,8 @@ createUser().catch((error) => {
       'Account provisioning requires an interactive terminal.',
       'Account provisioning cancelled.',
       'An account already exists for that email address.',
+      'The doctor profile must exist and be active.',
+      'That doctor profile already has a linked account.',
       'Display name must be between 1 and 120 characters.',
       'Passwords do not match.',
       'Password must be at least 12 characters and no more than 72 UTF-8 bytes.',

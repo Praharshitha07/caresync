@@ -35,9 +35,9 @@ export default function PatientDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const canManagePatients = ['admin', 'clinician', 'nurse'].includes(user?.role);
+  const canManagePatients = ['admin', 'doctor', 'clinician', 'nurse'].includes(user?.role);
   const canCreateRecords = canManagePatients;
-  const canScheduleAppointments = ['admin', 'clinician', 'nurse', 'records_staff'].includes(user?.role);
+  const canScheduleAppointments = ['admin', 'doctor', 'clinician', 'nurse', 'records_staff'].includes(user?.role);
 
   const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'records' | 'appointments'
   const [selectedRecordForView, setSelectedRecordForView] = useState(null);
@@ -243,7 +243,9 @@ export default function PatientDetailPage() {
             <span className="text-brand-text font-semibold">
               {patient.room || 'Outpatient Clinic'}
             </span>
-            <span className="text-[11px]">Attending: {patient.primaryPhysician}</span>
+            <span className="text-[11px]">
+              Attending: {patient.doctorName || patient.primaryPhysician || 'Not assigned'}
+            </span>
           </div>
         </div>
 

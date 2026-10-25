@@ -15,18 +15,21 @@ import PrimaryButton from '../components/PrimaryButton';
 import SecondaryButton from '../components/SecondaryButton';
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
-import { createMedicalRecord, listPatients } from '../services/api';
+import { createMedicalRecord, listDoctors, listPatients } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 export default function NewMedicalRecordPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
-  const canCreate = ['admin', 'clinician', 'nurse'].includes(user?.role);
+  const canCreate = ['admin', 'doctor', 'clinician', 'nurse'].includes(user?.role);
   const [patients, setPatients] = useState([]);
   const [isLoadingPatients, setIsLoadingPatients] = useState(true);
   const [patientLoadError, setPatientLoadError] = useState('');
   const [loadKey, setLoadKey] = useState(0);
+  const [doctors, setDoctors] = useState([]);
+  const [doctorsLoading, setDoctorsLoading] = useState(true);
+  const [doctorLoadError, setDoctorLoadError] = useState('');
 
   const preselectedPatientId = location.state?.preselectedPatientId || '';
 
@@ -37,7 +40,7 @@ export default function NewMedicalRecordPage() {
     treatment: '',
     prescriptions: '',
     clinicalNotes: '',
-    attendingPhysician: 'Dr. Sarah Jenkins',
+    attendingPhysician: '',
     department: 'General Medicine',
     followUpDate: '',
   });
@@ -46,6 +49,28 @@ export default function NewMedicalRecordPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successFeedback, setSuccessFeedback] = useState(null);
   const [submitError, setSubmitError] = useState('');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    listDoctors({}, { signal: controller.signal })
+      .then((activeDoctors) => {
+        const availableDoctors = user?.role === 'doctor'
+          ? activeDoctors.filter((doctor) => doctor.id === user.doctorId)
+          : activeDoctors;
+        setDoctors(availableDoctors);
+        setFormData((previous) => ({
+          ...previous,
+          attendingPhysician: previous.attendingPhysician || availableDoctors[0]?.name || '',
+        }));
+      })
+      .catch((error) => {
+        if (error.name !== 'AbortError') setDoctorLoadError(error.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setDoctorsLoading(false);
+      });
+    return () => controller.abort();
+  }, [user?.doctorId, user?.role]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -268,7 +293,7 @@ export default function NewMedicalRecordPage() {
                 name="department"
                 value={formData.department}
                 onChange={handleChange}
-                disabled={isSubmitting}
+                disabled={isSubmitting || doctorsLoading || Boolean(doctorLoadError)}
                 className="block w-full py-2 px-3 text-sm rounded-md border border-brand-border bg-white text-brand-text focus:outline-none focus:ring-1 focus:ring-brand-primary"
               >
                 <option value="General Medicine">General Medicine</option>
@@ -437,11 +462,28 @@ export default function NewMedicalRecordPage() {
                   disabled={isSubmitting}
                   className="block w-full py-2 px-3 text-sm rounded-md border border-brand-border bg-white text-brand-text focus:outline-none focus:ring-1 focus:ring-brand-primary"
                 >
-                  <option value="Dr. Sarah Jenkins">Dr. Sarah Jenkins (Internal Medicine)</option>
-                  <option value="Dr. Robert Chen">Dr. Robert Chen (Orthopedic Surgery)</option>
-                  <option value="Dr. Maya Patel">Dr. Maya Patel (Cardiology)</option>
-                  <option value="Dr. Gregory House">Dr. Gregory House (Diagnostics)</option>
+                  <option value="">
+                    {doctorsLoading
+                      ? 'Loading doctors...'
+                      : doctorLoadError
+                        ? 'Unable to load doctors'
+                        : doctors.length
+                          ? 'Select a doctor'
+                          : 'No active doctors'}
+                  </option>
+                  {doctors.map((doctor) => (
+                    <option key={doctor.id} value={doctor.name}>
+                      {doctor.name} ({doctor.specialty})
+                    </option>
+                  ))}
                 </select>
+                {doctorsLoading ? (
+                  <p className="mt-1 text-xs text-brand-muted">Loading active doctors...</p>
+                ) : doctorLoadError ? (
+                  <p role="alert" className="mt-1 text-xs text-brand-error">{doctorLoadError}</p>
+                ) : doctors.length === 0 ? (
+                  <p className="mt-1 text-xs text-amber-700">Add an active doctor before filing a medical record.</p>
+                ) : null}
               </div>
             </div>
           </div>

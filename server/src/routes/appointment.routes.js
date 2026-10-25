@@ -1,10 +1,14 @@
 import { Router } from 'express';
 import Appointment from '../models/appointment.model.js';
 import Patient from '../models/patient.model.js';
+import Doctor from '../models/doctor.model.js';
 import AuthSession from '../models/auth-session.model.js';
 import AuditEvent from '../models/audit-event.model.js';
 import { createAppointmentController } from '../controllers/appointment.controller.js';
-import { createRequireAuthentication } from '../middleware/auth.middleware.js';
+import {
+  createRequireAuthentication,
+  createRequireDoctorProfile,
+} from '../middleware/auth.middleware.js';
 import { createAuditedAuthorization } from '../middleware/audit.middleware.js';
 import { validateRequest } from '../middleware/validate-request.middleware.js';
 import {
@@ -13,13 +17,14 @@ import {
   updateAppointmentSchema,
 } from '../validation/clinical.validation.js';
 
-const READ_ROLES = ['admin', 'clinician', 'nurse', 'records_staff'];
-const SCHEDULE_ROLES = ['admin', 'clinician', 'nurse', 'records_staff'];
-const UPDATE_ROLES = ['admin', 'clinician', 'nurse'];
+const READ_ROLES = ['admin', 'doctor', 'clinician', 'nurse', 'records_staff', 'receptionist'];
+const SCHEDULE_ROLES = ['admin', 'doctor', 'clinician', 'nurse', 'records_staff', 'receptionist'];
+const UPDATE_ROLES = ['admin', 'doctor', 'clinician', 'nurse'];
 
 export function createAppointmentRouter({
   AppointmentModel = Appointment,
   PatientModel = Patient,
+  DoctorModel = Doctor,
   SessionModel = AuthSession,
   AuditModel = AuditEvent,
   authenticate = createRequireAuthentication(SessionModel),
@@ -27,12 +32,13 @@ export function createAppointmentRouter({
   const router = Router();
   const controller = createAppointmentController(
     AppointmentModel,
-    PatientModel
+    PatientModel,
+    DoctorModel
   );
+  router.use(authenticate, createRequireDoctorProfile(DoctorModel));
 
   router.get(
     '/',
-    authenticate,
     createAuditedAuthorization(AuditModel, {
       roles: READ_ROLES,
       action: 'read_list',
@@ -43,7 +49,6 @@ export function createAppointmentRouter({
   );
   router.post(
     '/',
-    authenticate,
     createAuditedAuthorization(AuditModel, {
       roles: SCHEDULE_ROLES,
       action: 'create',
@@ -54,7 +59,6 @@ export function createAppointmentRouter({
   );
   router.get(
     '/:id',
-    authenticate,
     createAuditedAuthorization(AuditModel, {
       roles: READ_ROLES,
       action: 'read_item',
@@ -64,7 +68,6 @@ export function createAppointmentRouter({
   );
   router.patch(
     '/:id',
-    authenticate,
     createAuditedAuthorization(AuditModel, {
       roles: UPDATE_ROLES,
       action: 'update',
@@ -75,7 +78,6 @@ export function createAppointmentRouter({
   );
   router.delete(
     '/:id',
-    authenticate,
     createAuditedAuthorization(AuditModel, {
       roles: ['admin'],
       action: 'archive',

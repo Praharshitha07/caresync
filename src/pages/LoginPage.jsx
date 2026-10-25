@@ -55,8 +55,12 @@ export default function LoginPage() {
 
     setIsLoading(true);
     try {
-      await login({ email: email.trim(), password });
-      navigate(location.state?.from?.pathname || '/dashboard', { replace: true });
+      const account = await login({ email: email.trim(), password });
+      navigate(
+        location.state?.from?.pathname ||
+          (account.role === 'receptionist' ? '/appointments' : '/dashboard'),
+        { replace: true }
+      );
     } catch (error) {
       setGeneralError(error.message);
     } finally {

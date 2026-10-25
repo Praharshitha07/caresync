@@ -1,10 +1,14 @@
 import { Router } from 'express';
 import MedicalRecord from '../models/medical-record.model.js';
 import Patient from '../models/patient.model.js';
+import Doctor from '../models/doctor.model.js';
 import AuthSession from '../models/auth-session.model.js';
 import AuditEvent from '../models/audit-event.model.js';
 import { createMedicalRecordController } from '../controllers/medical-record.controller.js';
-import { createRequireAuthentication } from '../middleware/auth.middleware.js';
+import {
+  createRequireAuthentication,
+  createRequireDoctorProfile,
+} from '../middleware/auth.middleware.js';
 import { createAuditedAuthorization } from '../middleware/audit.middleware.js';
 import { validateRequest } from '../middleware/validate-request.middleware.js';
 import {
@@ -13,12 +17,13 @@ import {
   updateMedicalRecordSchema,
 } from '../validation/clinical.validation.js';
 
-const READ_ROLES = ['admin', 'clinician', 'nurse', 'records_staff'];
-const WRITE_ROLES = ['admin', 'clinician', 'nurse'];
+const READ_ROLES = ['admin', 'doctor', 'clinician', 'nurse', 'records_staff'];
+const WRITE_ROLES = ['admin', 'doctor', 'clinician', 'nurse'];
 
 export function createMedicalRecordRouter({
   MedicalRecordModel = MedicalRecord,
   PatientModel = Patient,
+  DoctorModel = Doctor,
   SessionModel = AuthSession,
   AuditModel = AuditEvent,
   authenticate = createRequireAuthentication(SessionModel),
@@ -26,12 +31,13 @@ export function createMedicalRecordRouter({
   const router = Router();
   const controller = createMedicalRecordController(
     MedicalRecordModel,
-    PatientModel
+    PatientModel,
+    DoctorModel
   );
+  router.use(authenticate, createRequireDoctorProfile(DoctorModel));
 
   router.get(
     '/',
-    authenticate,
     createAuditedAuthorization(AuditModel, {
       roles: READ_ROLES,
       action: 'read_list',
@@ -42,7 +48,6 @@ export function createMedicalRecordRouter({
   );
   router.post(
     '/',
-    authenticate,
     createAuditedAuthorization(AuditModel, {
       roles: WRITE_ROLES,
       action: 'create',
@@ -53,7 +58,6 @@ export function createMedicalRecordRouter({
   );
   router.get(
     '/:id',
-    authenticate,
     createAuditedAuthorization(AuditModel, {
       roles: READ_ROLES,
       action: 'read_item',
@@ -63,7 +67,6 @@ export function createMedicalRecordRouter({
   );
   router.patch(
     '/:id',
-    authenticate,
     createAuditedAuthorization(AuditModel, {
       roles: WRITE_ROLES,
       action: 'update',
@@ -74,7 +77,6 @@ export function createMedicalRecordRouter({
   );
   router.delete(
     '/:id',
-    authenticate,
     createAuditedAuthorization(AuditModel, {
       roles: ['admin'],
       action: 'archive',

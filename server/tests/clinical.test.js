@@ -43,11 +43,15 @@ function matches(record, filter) {
   for (const [field, expected] of Object.entries(filter)) {
     if (field === '$or') {
       if (!expected.some((condition) => matches(record, condition))) return false;
+    } else if (field === '$and') {
+      if (!expected.every((condition) => matches(record, condition))) return false;
     } else if (expected === null) {
       if (record[field]) return false;
     } else if (expected && typeof expected === 'object') {
       if ('$regex' in expected) {
         if (!new RegExp(expected.$regex, expected.$options).test(record[field] || '')) return false;
+      } else if ('$in' in expected) {
+        if (!expected.$in.includes(record[field])) return false;
       } else {
         if ('$gte' in expected && record[field] < expected.$gte) return false;
         if ('$lte' in expected && record[field] > expected.$lte) return false;
@@ -106,23 +110,62 @@ function createCollection() {
   };
 }
 
-function createClinicalApp({ role = 'clinician', auditFailure = false } = {}) {
+function createClinicalApp({
+  role = 'clinician',
+  auditFailure = false,
+  doctorId = 'doctor-profile-1',
+  assignedDoctorId = 'doctor-profile-1',
+} = {}) {
   const medicalRecords = createCollection();
   const appointments = createCollection();
   const auditEvents = [];
+  const patient = {
+    patientId: 'CS-TEST',
+    firstName: 'Synthetic',
+    lastName: 'Patient',
+    doctor: assignedDoctorId,
+    archivedAt: null,
+  };
+  const doctorModel = {
+    findOne(filter) {
+      return new Query(() =>
+        String(filter._id) === String(assignedDoctorId) && filter.active === true
+          ? { _id: assignedDoctorId, name: 'Linked Doctor', active: true }
+          : null
+      );
+    },
+    findById(id) {
+      return new Query(() => String(id) === String(assignedDoctorId)
+        ? { _id: assignedDoctorId, name: 'Linked Doctor' }
+        : null);
+    },
+    find(filter) {
+      return new Query(() => (filter._id?.$in || []).includes(assignedDoctorId)
+        ? [{ _id: assignedDoctorId, name: 'Linked Doctor' }]
+        : []);
+    },
+  };
   const patientModel = {
     find(filter) {
-      return new Query(async () =>
-        filter.patientId.$in.includes('CS-TEST') &&
-        filter.archivedAt === null
-          ? [{ patientId: 'CS-TEST', firstName: 'Synthetic', lastName: 'Patient' }]
-          : []
-      );
+      return new Query(async () => {
+        if (filter.doctor && String(filter.doctor) !== String(patient.doctor)) return [];
+        if (filter.$and) return matches(patient, { $and: filter.$and }) ? [patient] : [];
+        if (filter.patientId?.$in) {
+          return filter.patientId.$in.includes(patient.patientId) &&
+            (filter.archivedAt !== null || patient.archivedAt === null)
+            ? [patient]
+            : [];
+        }
+        if (filter.doctor) return patient.archivedAt === null ? [patient] : [];
+        return [];
+      });
     },
     findOne(filter) {
       return new Query(async () =>
-        filter.patientId === 'CS-TEST' && filter.archivedAt === null
-          ? { patientId: 'CS-TEST' }
+        filter.patientId === 'CS-TEST' &&
+        filter.archivedAt === null &&
+        (!filter.doctor || String(filter.doctor) === String(patient.doctor))
+          ? patient
           : null
       );
     },
@@ -142,7 +185,11 @@ function createClinicalApp({ role = 'clinician', auditFailure = false } = {}) {
     if (!req.headers.authorization) {
       return res.status(401).json({ success: false, message: 'Authentication is required' });
     }
-    req.auth = { userId: 'staff-1', role };
+    req.auth = {
+      userId: 'staff-1',
+      role,
+      doctorId: role === 'doctor' ? doctorId : '',
+    };
     return next();
   };
 
@@ -153,6 +200,7 @@ function createClinicalApp({ role = 'clinician', auditFailure = false } = {}) {
     createMedicalRecordRouter({
       MedicalRecordModel: medicalRecords,
       PatientModel: patientModel,
+      DoctorModel: doctorModel,
       AuditModel,
       authenticate,
     })
@@ -162,6 +210,7 @@ function createClinicalApp({ role = 'clinician', auditFailure = false } = {}) {
     createAppointmentRouter({
       AppointmentModel: appointments,
       PatientModel: patientModel,
+      DoctorModel: doctorModel,
       AuditModel,
       authenticate,
     })
@@ -231,7 +280,7 @@ test('clinicians can create and read records; audit decisions store metadata, no
 });
 
 test('clinical list searches filter records and appointments safely across pages', async () => {
-  const { app } = createClinicalApp();
+  const { app, medicalRecords } = createClinicalApp();
   await request(app)
     .post('/api/medical-records')
     .set('Authorization', 'test-session')
@@ -250,6 +299,52 @@ test('clinical list searches filter records and appointments safely across pages
     .expect(200);
   assert.equal(records.body.pagination.total, 1);
   assert.equal(records.body.data[0].diagnosis, recordPayload.diagnosis);
+  assert.equal(records.body.data[0].patientName, 'Synthetic Patient');
+
+  const firstNameSearch = await request(app)
+    .get('/api/medical-records')
+    .query({ search: 'Synthetic' })
+    .set('Authorization', 'test-session')
+    .expect(200);
+  assert.equal(firstNameSearch.body.pagination.total, 1);
+  assert.equal(firstNameSearch.body.data[0].patientName, 'Synthetic Patient');
+
+  const fullNameSearch = await request(app)
+    .get('/api/medical-records')
+    .query({ search: 'Synthetic Patient' })
+    .set('Authorization', 'test-session')
+    .expect(200);
+  assert.equal(fullNameSearch.body.pagination.total, 1);
+
+  const patientIdSearch = await request(app)
+    .get('/api/medical-records')
+    .query({ search: 'CS-TEST' })
+    .set('Authorization', 'test-session')
+    .expect(200);
+  assert.equal(patientIdSearch.body.pagination.total, 1);
+
+  const physicianSearch = await request(app)
+    .get('/api/medical-records')
+    .query({ search: 'Dr Test' })
+    .set('Authorization', 'test-session')
+    .expect(200);
+  assert.equal(physicianSearch.body.pagination.total, 1);
+
+  medicalRecords.records.push({
+    ...recordPayload,
+    patientId: 'CS-MISSING',
+    _id: 'record-orphan',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    archivedAt: null,
+  });
+  const orphanRecord = await request(app)
+    .get('/api/medical-records')
+    .set('Authorization', 'test-session')
+    .expect(200);
+  const orphan = orphanRecord.body.data.find(({ patientId }) => patientId === 'CS-MISSING');
+  assert.ok(orphan);
+  assert.equal(orphan.patientName, '');
 
   const escapedSearch = await request(app)
     .get('/api/medical-records')
@@ -287,6 +382,86 @@ test('records staff can read clinical records and schedule appointments, but can
   assert.equal(auditEvents[0].resource, 'appointments');
   assert.equal(auditEvents[0].outcome, 'authorization_granted');
   assert.equal(auditEvents[1].outcome, 'role_denied');
+});
+
+test('receptionists may schedule appointments but cannot read clinical records or update appointments', async () => {
+  const { app } = createClinicalApp({ role: 'receptionist' });
+  await request(app)
+    .get('/api/medical-records')
+    .set('Authorization', 'test-session')
+    .expect(403);
+  await request(app)
+    .get('/api/appointments')
+    .set('Authorization', 'test-session')
+    .expect(200);
+  const created = await request(app)
+    .post('/api/appointments')
+    .set('Authorization', 'test-session')
+    .send(appointmentPayload)
+    .expect(201);
+  assert.equal(created.body.data.reason, 'Scheduled appointment');
+  await request(app)
+    .patch(`/api/appointments/${created.body.data.id}`)
+    .set('Authorization', 'test-session')
+    .send({ status: 'Confirmed' })
+    .expect(403);
+});
+
+test('doctor accounts are scoped to their linked profile and record authorship uses that profile', async () => {
+  const { app, medicalRecords, appointments } = createClinicalApp({
+    role: 'doctor',
+    doctorId: '64b000000000000000000001',
+    assignedDoctorId: '64b000000000000000000001',
+  });
+  const record = await request(app)
+    .post('/api/medical-records')
+    .set('Authorization', 'test-session')
+    .send({ ...recordPayload, attendingPhysician: 'Spoofed Name' })
+    .expect(201);
+  assert.equal(record.body.data.attendingPhysician, 'Linked Doctor');
+
+  const appointment = await request(app)
+    .post('/api/appointments')
+    .set('Authorization', 'test-session')
+    .send({
+      ...appointmentPayload,
+      assignedDoctor: 'Spoofed Name',
+      doctorId: '64b000000000000000000001',
+    })
+    .expect(201);
+  assert.equal(appointment.body.data.assignedDoctor, 'Linked Doctor');
+  assert.equal(appointments.records[0].doctor, '64b000000000000000000001');
+
+  medicalRecords.records.push({
+    ...recordPayload,
+    patientId: 'CS-OTHER',
+    _id: 'foreign-record',
+    archivedAt: null,
+  });
+  appointments.records.push({
+    ...appointmentPayload,
+    _id: 'foreign-appointment',
+    doctor: '64b000000000000000000002',
+    archivedAt: null,
+  });
+  const records = await request(app)
+    .get('/api/medical-records')
+    .set('Authorization', 'test-session')
+    .expect(200);
+  assert.deepEqual(records.body.data.map(({ patientId }) => patientId), ['CS-TEST']);
+  await request(app)
+    .get('/api/medical-records/foreign-record')
+    .set('Authorization', 'test-session')
+    .expect(404);
+  const appointmentList = await request(app)
+    .get('/api/appointments')
+    .set('Authorization', 'test-session')
+    .expect(200);
+  assert.deepEqual(appointmentList.body.data.map(({ id }) => id), [appointment.body.data.id]);
+  await request(app)
+    .get('/api/appointments/foreign-appointment')
+    .set('Authorization', 'test-session')
+    .expect(404);
 });
 
 test('admin archival is soft, and audit-store failure blocks clinical reads', async () => {
