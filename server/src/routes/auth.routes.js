@@ -9,8 +9,8 @@ import User from '../models/user.model.js';
 import { createAuditedAuthorization } from '../middleware/audit.middleware.js';
 import {
   createRequireAuthentication,
+  getSessionCookieOptions,
   SESSION_COOKIE_NAME,
-  SESSION_COOKIE_OPTIONS,
 } from '../middleware/auth.middleware.js';
 import { validateRequest } from '../middleware/validate-request.middleware.js';
 import {
@@ -96,7 +96,7 @@ export function createAuthRouter({
       });
 
       res.cookie(SESSION_COOKIE_NAME, token, {
-        ...SESSION_COOKIE_OPTIONS,
+        ...getSessionCookieOptions(),
         maxAge: SESSION_TTL_MS,
       });
       return res.json({ success: true, data: { user: toPublicUser(user) } });
@@ -194,7 +194,7 @@ export function createAuthRouter({
         await SessionModel.deleteOne({ tokenHash });
       }
 
-      res.clearCookie(SESSION_COOKIE_NAME, SESSION_COOKIE_OPTIONS);
+      res.clearCookie(SESSION_COOKIE_NAME, getSessionCookieOptions());
       return res.json({ success: true });
     } catch (error) {
       return next(error);

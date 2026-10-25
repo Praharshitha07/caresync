@@ -4,12 +4,15 @@ import Doctor from '../models/doctor.model.js';
 
 export const SESSION_COOKIE_NAME = 'caresync_session';
 
-export const SESSION_COOKIE_OPTIONS = {
-  httpOnly: true,
-  secure: env.NODE_ENV === 'production',
-  sameSite: 'strict',
-  path: '/api',
-};
+export function getSessionCookieOptions(nodeEnvironment = env.NODE_ENV) {
+  const isProduction = nodeEnvironment === 'production';
+  return {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'strict',
+    path: '/api',
+  };
+}
 
 function readSessionToken(req) {
   const cookies = req.headers.cookie?.split(';') || [];
@@ -24,7 +27,7 @@ function readSessionToken(req) {
 }
 
 function unauthorized(res) {
-  res.clearCookie(SESSION_COOKIE_NAME, SESSION_COOKIE_OPTIONS);
+  res.clearCookie(SESSION_COOKIE_NAME, getSessionCookieOptions());
   return res.status(401).json({
     success: false,
     message: 'Authentication is required',

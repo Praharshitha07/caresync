@@ -3,9 +3,13 @@ import assert from 'node:assert/strict';
 import bcrypt from 'bcryptjs';
 import express from 'express';
 import request from 'supertest';
+import { env } from '../src/config/env.js';
 import { createAuthRouter } from '../src/routes/auth.routes.js';
 import { createPatientRouter } from '../src/routes/patient.routes.js';
-import { createRequireAuthentication } from '../src/middleware/auth.middleware.js';
+import {
+  createRequireAuthentication,
+  getSessionCookieOptions,
+} from '../src/middleware/auth.middleware.js';
 import { errorHandler } from '../src/middleware/errorHandler.js';
 
 function query(execute) {
@@ -164,6 +168,31 @@ test('authentication verifies credentials, issues a secure session cookie, and r
   assert.match(response.headers['set-cookie'][0], /HttpOnly/i);
   assert.match(response.headers['set-cookie'][0], /SameSite=Strict/i);
   assert.doesNotMatch(response.headers['set-cookie'][0], /password|correct horse/i);
+});
+
+test('production login issues a secure cookie for cross-site frontend/API hosting', async () => {
+  const previousEnvironment = env.NODE_ENV;
+  env.NODE_ENV = 'production';
+  try {
+    const { app } = await createAuthTestApp();
+    const response = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'admin@example.test', password: 'correct horse battery staple' })
+      .expect(200);
+
+    assert.match(response.headers['set-cookie'][0], /SameSite=None/i);
+    assert.match(response.headers['set-cookie'][0], /Secure/i);
+    assert.deepEqual(getSessionCookieOptions(), {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'none',
+      path: '/api',
+    });
+  } finally {
+    env.NODE_ENV = previousEnvironment;
+  }
+  assert.equal(getSessionCookieOptions('development').sameSite, 'strict');
+  assert.equal(getSessionCookieOptions('development').secure, false);
 });
 
 test('admin password reset changes the bcrypt hash and revokes the target sessions', async () => {

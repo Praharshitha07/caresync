@@ -106,9 +106,14 @@ an existing active, unlinked doctor profile. The backend stores only bcrypt
 hashes and returns only public account fields.
 Login sessions use random opaque tokens; only their SHA-256 hashes are stored
 in MongoDB. Sessions expire after eight hours and are revoked at logout.
-Cookies are HttpOnly and SameSite Strict, and Secure in production. Mutating
-authenticated requests with an Origin header must come from a configured client
-origin.
+Cookies are HttpOnly and SameSite Strict in development. Production cookies are
+SameSite None and Secure so browsers can send them when the frontend and API are
+hosted on different sites. Mutating authenticated requests with an Origin
+header must come from a configured client origin. For deployment, set
+`CLIENT_URL` to the exact frontend origin and build the frontend with
+`VITE_API_BASE_URL` set to the HTTPS API URL ending in `/api`. If a browser or
+hosting platform blocks third-party cookies, use a same-site frontend/API
+domain or reverse proxy.
 
 An existing staff password can be reset by an authenticated administrator at
 `PATCH /api/auth/users/:id/password`, providing `newPassword` and
