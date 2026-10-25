@@ -60,7 +60,10 @@ export function createDoctorController(Doctor) {
         if (includeInactive === 'true' && req.auth.role !== 'admin') {
           throw httpError(403, 'Only administrators may view inactive doctor profiles');
         }
-        const filter = includeInactive === 'true' ? {} : { active: true };
+        const filter = {
+          professionalIdentifier: { $not: /^DEV-FICTIONAL-/i },
+          ...(includeInactive === 'true' ? {} : { active: true }),
+        };
         if (search) {
           const pattern = { $regex: escapeRegex(search), $options: 'i' };
           filter.$or = [{ name: pattern }, { specialty: pattern }, { department: pattern }];

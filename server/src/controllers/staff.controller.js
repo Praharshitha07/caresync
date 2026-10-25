@@ -79,7 +79,6 @@ export function createStaffController(
           email,
           displayName,
           role,
-          doctorId,
           doctorProfile,
           password,
         } = req.validatedBody;
@@ -94,7 +93,7 @@ export function createStaffController(
           }
 
           let linkedDoctor = null;
-          if (role === 'doctor' && doctorProfile) {
+          if (role === 'doctor') {
             const namePattern = {
               $regex: `^${escapeRegex(displayName)}$`,
               $options: 'i',
@@ -114,7 +113,7 @@ export function createStaffController(
             if (duplicateProfile) {
               throw httpError(
                 409,
-                'A doctor profile with this name and specialty already exists. Link that profile instead.'
+                'A doctor profile with this name and specialty already exists'
               );
             }
 
@@ -129,21 +128,6 @@ export function createStaffController(
                 : {}),
               active: true,
             }], { session });
-          } else if (role === 'doctor') {
-            linkedDoctor = await DoctorModel.findOne({ _id: doctorId, active: true })
-              .session(session)
-              .select('_id name')
-              .lean()
-              .exec();
-            if (!linkedDoctor) throw httpError(400, 'Select an active doctor profile');
-            const existingLink = await UserModel.findOne({ doctor: doctorId })
-              .session(session)
-              .select('_id')
-              .lean()
-              .exec();
-            if (existingLink) {
-              throw httpError(409, 'This doctor profile is already linked to a staff account');
-            }
           }
 
           const [createdUser] = await UserModel.create([{

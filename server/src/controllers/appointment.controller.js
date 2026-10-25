@@ -1,5 +1,6 @@
 import Patient from '../models/patient.model.js';
 import Doctor from '../models/doctor.model.js';
+import { isSeededDemoDoctor } from '../utils/doctor-profile.js';
 
 function httpError(statusCode, message) {
   const error = new Error(message);
@@ -164,10 +165,12 @@ export function createAppointmentController(
         }
         if (doctorId) {
           doctor = await DoctorModel.findOne({ _id: doctorId, active: true })
-            .select('name')
+            .select('name professionalIdentifier')
             .lean()
             .exec();
-          if (!doctor) throw httpError(400, 'Selected doctor is not active');
+          if (!doctor || isSeededDemoDoctor(doctor)) {
+            throw httpError(400, 'Selected doctor is not active');
+          }
           fields.assignedDoctor = doctor.name;
         }
         const appointment = await Appointment.create({
@@ -208,10 +211,12 @@ export function createAppointmentController(
         let doctor = null;
         if (doctorId) {
           doctor = await DoctorModel.findOne({ _id: doctorId, active: true })
-            .select('name')
+            .select('name professionalIdentifier')
             .lean()
             .exec();
-          if (!doctor) throw httpError(400, 'Selected doctor is not active');
+          if (!doctor || isSeededDemoDoctor(doctor)) {
+            throw httpError(400, 'Selected doctor is not active');
+          }
           fields.doctor = doctorId;
           fields.assignedDoctor = doctor.name;
         }

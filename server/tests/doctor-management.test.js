@@ -22,6 +22,9 @@ function applyFilter(document, filter) {
   return Object.entries(filter).every(([field, expected]) => {
     if (field === '$or') return expected.some((branch) => applyFilter(document, branch));
     if (field === '_id' && expected?.$ne) return String(document._id) !== String(expected.$ne);
+    if (expected && typeof expected === 'object' && expected.$not instanceof RegExp) {
+      return !expected.$not.test(document[field] || '');
+    }
     if (expected && typeof expected === 'object' && expected.$regex) {
       return new RegExp(expected.$regex, expected.$options).test(document[field] || '');
     }
@@ -204,12 +207,19 @@ test('doctor listing filters, supports admin inactive profiles, and protects ina
     professionalIdentifier: 'DEV-TEST-002',
     active: false,
   });
+  await DoctorModel.create({
+    ...doctorPayload,
+    name: 'Retained Demo Profile',
+    professionalIdentifier: 'DEV-FICTIONAL-001',
+    active: true,
+  });
 
   const active = await request(app)
     .get('/api/doctors')
     .set('Authorization', 'test')
     .expect(200);
   assert.equal(active.body.data.length, 1);
+  assert.equal(active.body.data.some(({ name }) => name === 'Retained Demo Profile'), false);
 
   const searched = await request(app)
     .get('/api/doctors?includeInactive=true&search=Inactive')
@@ -217,6 +227,12 @@ test('doctor listing filters, supports admin inactive profiles, and protects ina
     .expect(200);
   assert.equal(searched.body.data.length, 1);
   assert.equal(searched.body.data[0].active, false);
+
+  const hiddenDemo = await request(app)
+    .get('/api/doctors?includeInactive=true&search=Retained%20Demo')
+    .set('Authorization', 'test')
+    .expect(200);
+  assert.equal(hiddenDemo.body.data.length, 0);
 
   await request(app)
     .get('/api/doctors?includeInactive=true')
@@ -258,6 +274,29 @@ test('appointment doctor selection persists Mongo reference and resolves its dis
     .expect(200);
   assert.equal(AppointmentModel.appointments[0].doctor, replacementDoctor._id);
   assert.equal(updated.body.data.assignedDoctor, replacementDoctor.name);
+});
+
+test('appointments cannot be newly assigned to retained seeded demo profiles', async () => {
+  const { app, DoctorModel, AppointmentModel } = createApp();
+  const demoDoctor = await DoctorModel.create({
+    ...doctorPayload,
+    professionalIdentifier: 'DEV-FICTIONAL-001',
+  });
+
+  await request(app)
+    .post('/api/appointments')
+    .set('Authorization', 'test')
+    .send({
+      patientId: 'CS-TEST',
+      date: '2026-10-28',
+      time: '10:00 AM',
+      reason: 'Follow-up',
+      type: 'Consultation',
+      assignedDoctor: demoDoctor.name,
+      doctorId: demoDoctor._id,
+    })
+    .expect(400);
+  assert.equal(AppointmentModel.appointments.length, 0);
 });
 
 test('doctor schema validates required profile fields', async () => {

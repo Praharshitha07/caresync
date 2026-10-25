@@ -160,47 +160,6 @@ async function login(app, email, password) {
 
 const securePassword = 'safe individual staff password';
 
-test('admin provisions a linked doctor account that logs in with the existing auth system', async () => {
-  const fixture = makeFixture();
-  const adminLogin = await login(fixture.app, 'admin@example.test', 'correct admin password');
-  const payload = {
-    email: 'doctor@example.test',
-    displayName: 'Casey Example',
-    role: 'doctor',
-    doctorId: fixture.doctorId,
-    password: securePassword,
-    confirmPassword: securePassword,
-  };
-  const response = await request(fixture.app)
-    .post('/api/staff')
-    .set('Cookie', adminLogin.cookie)
-    .send(payload)
-    .expect(201);
-  const account = fixture.users.find(({ email }) => email === payload.email);
-  assert.equal(response.body.data.role, 'doctor');
-  assert.deepEqual(response.body.data.doctor, {
-    id: fixture.doctorId,
-    name: 'Casey Example',
-  });
-  assert.equal(response.body.data.passwordHash, undefined);
-  assert.equal(response.body.data.password, undefined);
-  assert.equal(await bcrypt.compare(securePassword, account.passwordHash), true);
-
-  const doctorLogin = await login(fixture.app, payload.email, securePassword);
-  assert.equal(doctorLogin.user.role, 'doctor');
-  assert.equal(doctorLogin.user.doctorId, fixture.doctorId);
-
-  const staffList = await request(fixture.app)
-    .get('/api/staff')
-    .set('Cookie', adminLogin.cookie)
-    .expect(200);
-  assert.equal(staffList.body.data.find(({ id }) => id === account._id).doctor.name, 'Casey Example');
-  assert.equal(JSON.stringify(staffList.body).includes(account.passwordHash), false);
-  assert.equal(fixture.auditEvents.some(({ action, outcome }) =>
-    action === 'create' && outcome === 'authorization_granted'
-  ), true);
-});
-
 test('admin can create a doctor profile and login account in one staff workflow', async () => {
   const fixture = makeFixture();
   const adminLogin = await login(fixture.app, 'admin@example.test', 'correct admin password');
@@ -236,6 +195,16 @@ test('admin can create a doctor profile and login account in one staff workflow'
   const doctorLogin = await login(fixture.app, payload.email, securePassword);
   assert.equal(doctorLogin.user.role, 'doctor');
   assert.equal(doctorLogin.user.doctorId, doctor._id);
+
+  const staffList = await request(fixture.app)
+    .get('/api/staff')
+    .set('Cookie', adminLogin.cookie)
+    .expect(200);
+  assert.equal(staffList.body.data.find(({ id }) => id === user._id).doctor.name, 'Jordan Example');
+  assert.equal(JSON.stringify(staffList.body).includes(user.passwordHash), false);
+  assert.equal(fixture.auditEvents.some(({ action, outcome }) =>
+    action === 'create' && outcome === 'authorization_granted'
+  ), true);
 
   await request(fixture.app)
     .post('/api/staff')
@@ -282,7 +251,7 @@ test('staff list returns all account roles without exposing password hashes', as
   assert.equal(JSON.stringify(response.body).includes('passwordHash'), false);
 });
 
-test('staff creation rejects duplicate emails, duplicate doctor links, inactive profiles, and weak credentials', async () => {
+test('staff creation rejects doctor profile linking, duplicate accounts or profiles, and weak credentials', async () => {
   const fixture = makeFixture();
   const adminLogin = await login(fixture.app, 'admin@example.test', 'correct admin password');
   const emptyDoctorReference = await request(fixture.app)
@@ -298,13 +267,15 @@ test('staff creation rejects duplicate emails, duplicate doctor links, inactive 
     })
     .expect(400);
   assert.equal(emptyDoctorReference.body.message, 'Request validation failed');
-  assert.ok(emptyDoctorReference.body.errors.some(({ field }) => field === 'doctorId'));
+  assert.ok(emptyDoctorReference.body.errors.some(({ message }) =>
+    message.toLowerCase().includes('doctorid')
+  ));
 
   const payload = {
     email: 'doctor@example.test',
-    displayName: 'Casey Example',
+    displayName: 'Taylor Doctor',
     role: 'doctor',
-    doctorId: fixture.doctorId,
+    doctorProfile: { specialty: 'Emergency Medicine' },
     password: securePassword,
     confirmPassword: securePassword,
   };
@@ -326,12 +297,22 @@ test('staff creation rejects duplicate emails, duplicate doctor links, inactive 
   await request(fixture.app)
     .post('/api/staff')
     .set('Cookie', adminLogin.cookie)
-    .send({ ...payload, displayName: 'Another', doctorId: undefined })
+    .send({ ...payload, displayName: 'Another', doctorProfile: undefined })
     .expect(400);
   await request(fixture.app)
     .post('/api/staff')
     .set('Cookie', adminLogin.cookie)
-    .send({ ...payload, email: 'admin@example.test', role: 'nurse', doctorId: undefined })
+    .send({ ...payload, email: 'profile-link@example.test', doctorId: fixture.doctorId })
+    .expect(400);
+  await request(fixture.app)
+    .post('/api/staff')
+    .set('Cookie', adminLogin.cookie)
+    .send({
+      ...payload,
+      email: 'admin@example.test',
+      role: 'nurse',
+      doctorProfile: undefined,
+    })
     .expect(409);
   await request(fixture.app)
     .post('/api/staff')
@@ -380,9 +361,9 @@ test('only admins manage staff; receptionist cannot elevate role and doctor cann
     .set('Cookie', adminLogin.cookie)
     .send({
       email: 'doctor@example.test',
-      displayName: 'Casey Example',
+      displayName: 'Taylor Doctor',
       role: 'doctor',
-      doctorId: fixture.doctorId,
+      doctorProfile: { specialty: 'Emergency Medicine' },
       password: securePassword,
       confirmPassword: securePassword,
     })

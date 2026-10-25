@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Plus, Search, ShieldCheck, UserRound } from 'lucide-react';
 import PageContainer from '../components/PageContainer';
 import PrimaryButton from '../components/PrimaryButton';
@@ -10,7 +10,6 @@ import Modal from '../components/Modal';
 import { useAuth } from '../context/AuthContext';
 import {
   createStaffAccount,
-  listDoctors,
   listStaffAccounts,
   updateStaffAccountStatus,
 } from '../services/api';
@@ -28,8 +27,6 @@ const EMPTY_FORM = {
   email: '',
   displayName: '',
   role: 'nurse',
-  doctorSetup: 'create',
-  doctorId: '',
   specialty: '',
   department: '',
   phone: '',
@@ -42,7 +39,6 @@ export default function StaffPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const [staff, setStaff] = useState([]);
-  const [doctors, setDoctors] = useState([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -59,13 +55,9 @@ export default function StaffPage() {
     const controller = new AbortController();
     setLoading(true);
     setError('');
-    Promise.all([
-      listStaffAccounts({ signal: controller.signal }),
-      listDoctors({ includeInactive: 'true' }, { signal: controller.signal }),
-    ])
-      .then(([accounts, profiles]) => {
+    listStaffAccounts({ signal: controller.signal })
+      .then((accounts) => {
         setStaff(accounts);
-        setDoctors(profiles);
       })
       .catch((requestError) => {
         if (requestError.name !== 'AbortError') setError(requestError.message);
@@ -76,13 +68,6 @@ export default function StaffPage() {
     return () => controller.abort();
   }, [isAdmin, reloadKey]);
 
-  const linkedDoctorIds = useMemo(
-    () => new Set(staff.map(({ doctor }) => doctor?.id).filter(Boolean)),
-    [staff]
-  );
-  const availableDoctors = doctors.filter(
-    (doctor) => doctor.active && !linkedDoctorIds.has(doctor.id)
-  );
   const filteredStaff = staff.filter((account) =>
     `${account.displayName} ${account.email} ${account.role} ${account.doctor?.name || ''}`
       .toLowerCase()
@@ -103,8 +88,6 @@ export default function StaffPage() {
     setFormError('');
     setFormValidationErrors([]);
     const {
-      doctorSetup,
-      doctorId,
       specialty,
       department,
       phone,
@@ -114,10 +97,7 @@ export default function StaffPage() {
     try {
       await createStaffAccount({
         ...account,
-        ...(formData.role === 'doctor' && doctorSetup === 'link'
-          ? { doctorId }
-          : {}),
-        ...(formData.role === 'doctor' && doctorSetup === 'create'
+        ...(formData.role === 'doctor'
           ? {
               doctorProfile: {
                 specialty,
@@ -280,8 +260,6 @@ export default function StaffPage() {
               onChange={(event) => setFormData({
                 ...formData,
                 role: event.target.value,
-                doctorSetup: 'create',
-                doctorId: '',
               })}
               className="mt-1 block w-full rounded-md border border-brand-border bg-white px-3 py-2 text-sm font-normal"
             >
@@ -296,85 +274,48 @@ export default function StaffPage() {
           {formData.role === 'doctor' && (
             <div className="space-y-3 rounded-md border border-brand-border bg-slate-50 p-3">
               <label className="block text-xs font-semibold text-brand-text">
-                Doctor profile
-                <select
-                  value={formData.doctorSetup}
-                  onChange={(event) => setFormData({
-                    ...formData,
-                    doctorSetup: event.target.value,
-                    doctorId: '',
-                  })}
-                  className="mt-1 block w-full rounded-md border border-brand-border bg-white px-3 py-2 text-sm font-normal"
-                >
-                  <option value="create">Create a new doctor profile</option>
-                  <option value="link">Link an existing doctor profile</option>
-                </select>
+                Specialty
+                <input
+                  required
+                  maxLength={120}
+                  value={formData.specialty}
+                  onChange={(event) => setFormData({ ...formData, specialty: event.target.value })}
+                  placeholder="Enter specialty"
+                  className="mt-1 block w-full rounded-md border border-brand-border px-3 py-2 text-sm font-normal"
+                />
               </label>
-              {formData.doctorSetup === 'create' ? (
-                <>
-                  <label className="block text-xs font-semibold text-brand-text">
-                    Specialty
-                    <input
-                      required
-                      maxLength={120}
-                      value={formData.specialty}
-                      onChange={(event) => setFormData({ ...formData, specialty: event.target.value })}
-                      placeholder="Enter specialty"
-                      className="mt-1 block w-full rounded-md border border-brand-border px-3 py-2 text-sm font-normal"
-                    />
-                  </label>
-                  <label className="block text-xs font-semibold text-brand-text">
-                    Department (optional)
-                    <input
-                      maxLength={120}
-                      value={formData.department}
-                      onChange={(event) => setFormData({ ...formData, department: event.target.value })}
-                      placeholder="Enter department"
-                      className="mt-1 block w-full rounded-md border border-brand-border px-3 py-2 text-sm font-normal"
-                    />
-                  </label>
-                  <label className="block text-xs font-semibold text-brand-text">
-                    Contact phone (optional)
-                    <input
-                      type="tel"
-                      maxLength={40}
-                      value={formData.phone}
-                      onChange={(event) => setFormData({ ...formData, phone: event.target.value })}
-                      className="mt-1 block w-full rounded-md border border-brand-border px-3 py-2 text-sm font-normal"
-                    />
-                  </label>
-                  <label className="block text-xs font-semibold text-brand-text">
-                    Professional identifier (optional)
-                    <input
-                      maxLength={40}
-                      value={formData.professionalIdentifier}
-                      onChange={(event) => setFormData({ ...formData, professionalIdentifier: event.target.value })}
-                      className="mt-1 block w-full rounded-md border border-brand-border px-3 py-2 text-sm font-normal"
-                    />
-                  </label>
-                  <p className="text-xs font-normal text-brand-muted">
-                    This creates a new doctor profile linked to this login account. The account email is also used as the profile contact email.
-                  </p>
-                </>
-              ) : (
-                <label className="block text-xs font-semibold text-brand-text">
-                  Existing active doctor profile
-                  <select
-                    required
-                    value={formData.doctorId}
-                    onChange={(event) => setFormData({ ...formData, doctorId: event.target.value })}
-                    className="mt-1 block w-full rounded-md border border-brand-border bg-white px-3 py-2 text-sm font-normal"
-                  >
-                    <option value="">Select an unlinked doctor profile</option>
-                    {availableDoctors.map((doctor) => (
-                      <option key={doctor.id} value={doctor.id}>{doctor.name} ({doctor.specialty})</option>
-                    ))}
-                  </select>
-                  {availableDoctors.length === 0 && (
-                    <span className="mt-1 block font-normal text-amber-800">No unlinked active profiles are available.</span>
-                  )}
-                </label>
-              )}
+              <label className="block text-xs font-semibold text-brand-text">
+                Department (optional)
+                <input
+                  maxLength={120}
+                  value={formData.department}
+                  onChange={(event) => setFormData({ ...formData, department: event.target.value })}
+                  placeholder="Enter department"
+                  className="mt-1 block w-full rounded-md border border-brand-border px-3 py-2 text-sm font-normal"
+                />
+              </label>
+              <label className="block text-xs font-semibold text-brand-text">
+                Contact phone (optional)
+                <input
+                  type="tel"
+                  maxLength={40}
+                  value={formData.phone}
+                  onChange={(event) => setFormData({ ...formData, phone: event.target.value })}
+                  className="mt-1 block w-full rounded-md border border-brand-border px-3 py-2 text-sm font-normal"
+                />
+              </label>
+              <label className="block text-xs font-semibold text-brand-text">
+                Professional identifier (optional)
+                <input
+                  maxLength={40}
+                  value={formData.professionalIdentifier}
+                  onChange={(event) => setFormData({ ...formData, professionalIdentifier: event.target.value })}
+                  className="mt-1 block w-full rounded-md border border-brand-border px-3 py-2 text-sm font-normal"
+                />
+              </label>
+              <p className="text-xs font-normal text-brand-muted">
+                This creates a new doctor profile linked to this login account. The account email is also used as the profile contact email.
+              </p>
             </div>
           )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -396,7 +337,6 @@ export default function StaffPage() {
               type="submit"
               isLoading={saving}
               icon={ShieldCheck}
-              disabled={formData.role === 'doctor' && formData.doctorSetup === 'link' && availableDoctors.length === 0}
             >
               Create Account
             </PrimaryButton>

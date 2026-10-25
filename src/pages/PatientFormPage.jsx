@@ -704,6 +704,15 @@ export default function PatientFormPage() {
                 className="block w-full py-2 px-3 text-sm rounded-md border border-brand-border bg-white text-brand-text focus:outline-none focus:ring-1 focus:ring-brand-primary"
               >
                 <option value="">Select an active doctor</option>
+                {isEditMode
+                  && formData.doctorId
+                  && !doctors.some((doctor) => doctor.id === formData.doctorId) && (
+                    <option value={formData.doctorId} disabled>
+                      Current historical assignment: {existingPatient?.doctorName
+                        || existingPatient?.primaryPhysician
+                        || 'Doctor profile unavailable'}
+                    </option>
+                )}
                 {doctors.map((doctor) => (
                   <option key={doctor.id} value={doctor.id}>
                     {doctor.name} ({doctor.specialty})

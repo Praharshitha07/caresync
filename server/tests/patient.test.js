@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import request from 'supertest';
 import { createPatientRouter } from '../src/routes/patient.routes.js';
+import { toPatientResponse } from '../src/controllers/patient.controller.js';
 import { errorHandler } from '../src/middleware/errorHandler.js';
 import { env } from '../src/config/env.js';
 import Patient from '../src/models/patient.model.js';
@@ -194,6 +195,58 @@ const validPatient = {
   doctorId: idFor(100),
 };
 
+test('patient response retains historical physician name if the linked profile is unavailable', () => {
+  const patient = {
+    patientId: 'CS-HISTORY',
+    firstName: 'Fictional',
+    lastName: 'Patient',
+    dob: '1990-02-03',
+    gender: 'Undisclosed',
+    phone: '555-0100',
+    email: '',
+    status: 'Outpatient',
+    doctor: idFor(100),
+    primaryPhysician: 'Historical Physician',
+    createdAt: new Date('2025-01-01T00:00:00.000Z'),
+    updatedAt: new Date('2025-01-01T00:00:00.000Z'),
+  };
+
+  assert.equal(toPatientResponse(patient).doctorName, 'Historical Physician');
+  assert.equal(
+    toPatientResponse(patient, { receptionist: true }).doctorName,
+    'Historical Physician'
+  );
+});
+
+test('patient demographic edits preserve a legacy doctor reference without reassigning it', async () => {
+  const model = createTestModel();
+  const historicalDoctorId = idFor(100);
+  model.records.push({
+    patientId: 'CS-HISTORY',
+    firstName: 'Fictional',
+    lastName: 'Patient',
+    dob: '1990-02-03',
+    gender: 'Undisclosed',
+    phone: '555-0100',
+    email: '',
+    status: 'Outpatient',
+    doctor: historicalDoctorId,
+    primaryPhysician: 'Historical Physician',
+    createdAt: new Date('2025-01-01T00:00:00.000Z'),
+    updatedAt: new Date('2025-01-01T00:00:00.000Z'),
+    archivedAt: null,
+  });
+  const { app } = createTestApp(model, { DoctorModel: { findOne: () => new Query(() => null) } });
+
+  const response = await request(app)
+    .patch('/api/patients/CS-HISTORY')
+    .send({ phone: '555-0101', doctorId: historicalDoctorId })
+    .expect(200);
+
+  assert.equal(model.records[0].doctor, historicalDoctorId);
+  assert.equal(response.body.data.doctorName, 'Historical Physician');
+});
+
 test('patient API validates and manages patient records', async (t) => {
   const model = createTestModel();
   const { app, auditEvents, DoctorModel } = createTestApp(model);
@@ -245,6 +298,15 @@ test('patient API validates and manages patient records', async (t) => {
       .send(validPatient)
       .expect(400);
     assert.equal(inactiveResponse.body.message, 'Selected doctor is not active');
+
+    const demoDoctors = createTestDoctorModel();
+    demoDoctors.doctors[0].professionalIdentifier = 'DEV-FICTIONAL-001';
+    const demoApp = createTestApp(createTestModel(), { DoctorModel: demoDoctors }).app;
+    const demoResponse = await request(demoApp)
+      .post('/api/patients')
+      .send(validPatient)
+      .expect(400);
+    assert.equal(demoResponse.body.message, 'Selected doctor is not active');
 
     const secondDoctorId = idFor(101);
     DoctorModel.doctors.push({

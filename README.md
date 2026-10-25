@@ -137,14 +137,17 @@ to an existing profile; creating a profile does not create an account.
 
 Administrators use **Staff** in the CareSync navigation to create accounts,
 view roles and doctor links, and activate/deactivate accounts. For a doctor
-account, either create a new profile (with free-text specialty and optional
-department/contact details) in the same transaction as the account, or choose
-an active, unlinked existing profile. Nurses and receptionists do not need
-doctor profiles; the existing `clinician` and `records_staff` roles can also be
-provisioned for compatibility with their existing permissions. The administrator supplies a temporary initial
-password (minimum 12 characters); it is bcrypt-hashed on the server and never
-returned to the browser after creation. Convey it to the staff member through
-a separate secure channel. Each member signs in on the existing `/login` page
+account, the staff form creates a new profile (with free-text specialty and
+optional department/contact details) in the same transaction as the account
+and links it automatically. A duplicate name-and-specialty profile is rejected
+rather than linked implicitly. The CLI can still link an existing active
+profile when provisioning an account for a previously created doctor. Nurses
+and receptionists do not need doctor profiles; the existing `clinician` and
+`records_staff` roles can also be provisioned for compatibility with their
+existing permissions. The administrator supplies a temporary initial password
+(minimum 12 characters); it is bcrypt-hashed on the server and never returned
+to the browser after creation. Convey it to the staff member through a
+separate secure channel. Each member signs in on the existing `/login` page
 with their own email and password. There is no public self-registration.
 
 The current permission policy is:
@@ -199,17 +202,6 @@ The dashboard summary (`GET /api/dashboard`) returns active-patient and
 appointment counts, recent patients, and upcoming appointments from MongoDB.
 Counts use database queries rather than loading full collections. Doctor
 directory reads are authenticated, authorized, and audited.
-
-Seed fictional doctor records explicitly for local development:
-
-```powershell
-cd server
-npm run doctors:seed
-```
-
-The seed script uses the configured `MONGODB_URI`, is safe to repeat, inserts
-only doctors, and does not modify existing records. Its clinician names are
-fictional examples, not claims about real or licensed practitioners.
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
@@ -317,7 +309,7 @@ live database.
 | `POST` | `/api/doctors` | Admin | Create a validated doctor profile |
 | `PATCH` | `/api/doctors/:id` | Admin | Edit or safely deactivate/reactivate a doctor |
 | `GET` | `/api/staff` | Admin | List account roles/status and linked doctor profile names |
-| `POST` | `/api/staff` | Admin | Create an account with an initial password and optional doctor link |
+| `POST` | `/api/staff` | Admin | Create an account with an initial password; Doctor accounts create and link a profile |
 | `PATCH` | `/api/staff/:id/status` | Admin | Activate/deactivate an account and revoke sessions on deactivation |
 | `POST` | `/api/auth/login` | Public, rate-limited | Verify staff credentials and issue an HttpOnly session cookie |
 | `GET` | `/api/auth/session` | Authenticated | Return the current account's public profile |

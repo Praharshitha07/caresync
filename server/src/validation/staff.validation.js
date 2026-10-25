@@ -34,7 +34,6 @@ export const createStaffSchema = z
     email: z.string().trim().email().max(254).transform((email) => email.toLowerCase()),
     displayName: z.string().trim().min(1).max(120),
     role: z.enum(STAFF_ROLES),
-    doctorId: z.string().regex(/^[a-f\d]{24}$/i).optional(),
     doctorProfile: doctorProfileSchema.optional(),
     password: passwordSchema,
     confirmPassword: z.string().min(1),
@@ -45,14 +44,12 @@ export const createStaffSchema = z
     path: ['confirmPassword'],
   })
   .refine((value) => {
-    const hasExistingProfile = Boolean(value.doctorId);
-    const createsProfile = Boolean(value.doctorProfile);
     return value.role === 'doctor'
-      ? hasExistingProfile !== createsProfile
-      : !hasExistingProfile && !createsProfile;
+      ? Boolean(value.doctorProfile)
+      : !value.doctorProfile;
   }, {
-    message: 'Select an existing doctor profile or provide new doctor profile details. Doctor profile fields are only allowed for doctor accounts.',
-    path: ['doctorId'],
+    message: 'Doctor profile details are required for doctor accounts and are only allowed for doctor accounts.',
+    path: ['doctorProfile'],
   });
 
 export const updateStaffStatusParamsSchema = z

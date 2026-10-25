@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { isSeededDemoDoctor } from '../utils/doctor-profile.js';
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -38,7 +39,7 @@ export function toPatientResponse(
         address: patient.address || '',
         emergencyContact: patient.emergencyContact || {},
       }),
-      doctorName: doctorName || '',
+      doctorName: doctorName || patient.primaryPhysician || '',
       registrationDate,
       formattedRegDate: new Date(`${registrationDate}T00:00:00.000Z`).toLocaleDateString(
         'en-US',
@@ -109,7 +110,10 @@ function patientFilter(identifier) {
 
 async function doctorForId(Doctor, id) {
   if (!id) return null;
-  return Doctor.findOne({ _id: id }).select('name active').lean().exec();
+  return Doctor.findOne({ _id: id })
+    .select('name active professionalIdentifier')
+    .lean()
+    .exec();
 }
 
 async function toPatientResponses(
@@ -237,7 +241,9 @@ export function createPatientController(Patient, Doctor) {
           throw httpError(403, 'Doctors may register patients only to their linked profile');
         }
         const doctor = await doctorForId(Doctor, doctorId);
-        if (!doctor || !doctor.active) throw httpError(400, 'Selected doctor is not active');
+        if (!doctor || !doctor.active || isSeededDemoDoctor(doctor)) {
+          throw httpError(400, 'Selected doctor is not active');
+        }
         const patient = await Patient.create({ ...fields, doctor: doctorId });
         return res.status(201).json({
           success: true,
@@ -260,18 +266,30 @@ export function createPatientController(Patient, Doctor) {
         if (req.auth.role === 'doctor' && doctorId && doctorId !== req.auth.doctorId) {
           throw httpError(403, 'Doctors may assign patients only to their linked profile');
         }
+        const filter = {
+          ...patientFilter(req.params.id),
+          ...(req.auth.role === 'doctor' ? { doctor: req.auth.doctorId } : {}),
+        };
+        const currentPatient = await Patient.findOne(filter)
+          .select('doctor')
+          .lean()
+          .exec();
+        if (!currentPatient) throw httpError(404, 'Patient not found');
+
         let doctorName = '';
         if (doctorId) {
           const doctor = await doctorForId(Doctor, doctorId);
-          if (!doctor || !doctor.active) throw httpError(400, 'Selected doctor is not active');
-          doctorName = doctor.name;
-          fields.doctor = doctorId;
+          const keepingExistingAssignment =
+            String(currentPatient.doctor || '') === String(doctorId);
+          if (!keepingExistingAssignment
+            && (!doctor || !doctor.active || isSeededDemoDoctor(doctor))) {
+            throw httpError(400, 'Selected doctor is not active');
+          }
+          doctorName = doctor?.name || '';
+          if (!keepingExistingAssignment) fields.doctor = doctorId;
         }
         const patient = await Patient.findOneAndUpdate(
-          {
-            ...patientFilter(req.params.id),
-            ...(req.auth.role === 'doctor' ? { doctor: req.auth.doctorId } : {}),
-          },
+          filter,
           { $set: fields },
           { new: true, runValidators: true }
         )
