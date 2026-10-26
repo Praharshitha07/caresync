@@ -71,7 +71,10 @@ async function createAuthTestApp() {
       return {
         async exec() {
           const user = users.find(
-            (item) => item._id === filter._id && item.isActive === filter.isActive
+            (item) =>
+              item._id === filter._id &&
+              item.isActive === filter.isActive &&
+              (!filter.passwordHash || item.passwordHash === filter.passwordHash)
           );
           if (!user) return { matchedCount: 0 };
           Object.assign(user, update.$set);
@@ -250,6 +253,125 @@ test('admin password reset changes the bcrypt hash and revokes the target sessio
       password: 'replacement secure passphrase',
     })
     .expect(200);
+});
+
+test('self-service password change requires the correct current password and matching confirmation', async () => {
+  const { app, users, sessions } = await createAuthTestApp();
+  const login = await request(app)
+    .post('/api/auth/login')
+    .send({ email: 'records@example.test', password: 'records secret passphrase' })
+    .expect(200);
+  const cookie = login.headers['set-cookie'][0].split(';')[0];
+  const originalHash = users[1].passwordHash;
+
+  const incorrectPassword = await request(app)
+    .patch('/api/auth/password')
+    .set('Cookie', cookie)
+    .send({
+      currentPassword: 'incorrect current password',
+      newPassword: 'replacement secure passphrase',
+      confirmPassword: 'replacement secure passphrase',
+    })
+    .expect(400);
+  assert.equal(incorrectPassword.body.message, 'Current password is incorrect');
+  assert.equal(users[1].passwordHash, originalHash);
+  assert.equal(sessions.length, 1);
+  assert.equal(JSON.stringify(incorrectPassword.body).includes(originalHash), false);
+
+  const mismatch = await request(app)
+    .patch('/api/auth/password')
+    .set('Cookie', cookie)
+    .send({
+      currentPassword: 'records secret passphrase',
+      newPassword: 'replacement secure passphrase',
+      confirmPassword: 'different secure passphrase',
+    })
+    .expect(400);
+  assert.equal(mismatch.body.message, 'Request validation failed');
+  assert.equal(mismatch.body.errors[0].field, 'confirmPassword');
+  assert.equal(users[1].passwordHash, originalHash);
+
+  await request(app)
+    .patch('/api/auth/password')
+    .set('Cookie', cookie)
+    .send({
+      userId: '64b000000000000000000001',
+      currentPassword: 'records secret passphrase',
+      newPassword: 'replacement secure passphrase',
+      confirmPassword: 'replacement secure passphrase',
+    })
+    .expect(400);
+  assert.equal(
+    await bcrypt.compare('correct horse battery staple', users[0].passwordHash),
+    true
+  );
+  assert.equal(users[1].passwordHash, originalHash);
+});
+
+test('successful self-service password change updates the hash and invalidates all own sessions', async () => {
+  const { app, sessions, users } = await createAuthTestApp();
+  const ownLogin = await request(app)
+    .post('/api/auth/login')
+    .send({ email: 'records@example.test', password: 'records secret passphrase' })
+    .expect(200);
+  const ownCookie = ownLogin.headers['set-cookie'][0].split(';')[0];
+  await request(app)
+    .post('/api/auth/login')
+    .send({ email: 'admin@example.test', password: 'correct horse battery staple' })
+    .expect(200);
+  const originalHash = users[1].passwordHash;
+
+  const response = await request(app)
+    .patch('/api/auth/password')
+    .set('Cookie', ownCookie)
+    .send({
+      currentPassword: 'records secret passphrase',
+      newPassword: 'replacement secure passphrase',
+      confirmPassword: 'replacement secure passphrase',
+    })
+    .expect(200);
+
+  assert.equal(response.body.success, true);
+  assert.equal(response.body.data, undefined);
+  assert.equal(users[1].passwordHash === originalHash, false);
+  assert.equal(
+    await bcrypt.compare('replacement secure passphrase', users[1].passwordHash),
+    true
+  );
+  assert.equal(sessions.length, 1);
+  assert.match(
+    response.headers['set-cookie'][0],
+    /caresync_session=; Path=\/api; Expires=Thu, 01 Jan 1970/i
+  );
+  assert.equal(JSON.stringify(response.body).includes(users[1].passwordHash), false);
+
+  await request(app)
+    .get('/api/auth/session')
+    .set('Cookie', ownCookie)
+    .expect(401);
+  await request(app)
+    .post('/api/auth/login')
+    .send({ email: 'records@example.test', password: 'records secret passphrase' })
+    .expect(401);
+  await request(app)
+    .post('/api/auth/login')
+    .send({
+      email: 'records@example.test',
+      password: 'replacement secure passphrase',
+    })
+    .expect(200);
+});
+
+test('self-service password change requires authentication', async () => {
+  const { app } = await createAuthTestApp();
+  await request(app)
+    .patch('/api/auth/password')
+    .send({
+      currentPassword: 'records secret passphrase',
+      newPassword: 'replacement secure passphrase',
+      confirmPassword: 'replacement secure passphrase',
+    })
+    .expect(401);
 });
 
 test('password reset requires admin authorization and rejects missing or inactive accounts', async () => {

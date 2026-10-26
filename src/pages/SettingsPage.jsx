@@ -3,26 +3,22 @@ import {
   Settings,
   User,
   Shield,
-  Key,
-  Bell,
   Lock,
-  Mail,
-  Building,
   CheckCircle2,
   Info,
-  Clock,
-  Palette,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import PageContainer from '../components/PageContainer';
 import PrimaryButton from '../components/PrimaryButton';
-import SecondaryButton from '../components/SecondaryButton';
-import Modal from '../components/Modal';
 import { useAuth } from '../context/AuthContext';
+import { changePassword } from '../services/api';
+import { useNavigate } from 'react-router-dom';
 
 export default function SettingsPage() {
-  const { user } = useAuth();
+  const { user, clearSession } = useAuth();
+  const navigate = useNavigate();
 
-  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [preferences, setPreferences] = useState({
     emailAlerts: true,
     urgentCasePings: true,
@@ -30,10 +26,107 @@ export default function SettingsPage() {
     defaultDepartment: 'General Medicine & Acute Care',
   });
   const [prefSavedNotice, setPrefSavedNotice] = useState(false);
+  const [passwords, setPasswords] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: '',
+  });
+  const [visiblePasswords, setVisiblePasswords] = useState({});
+  const [passwordErrors, setPasswordErrors] = useState({});
+  const [passwordError, setPasswordError] = useState('');
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
 
   const handleTogglePref = (key) => {
     setPreferences((prev) => ({ ...prev, [key]: !prev[key] }));
   };
+
+  const handleChangePassword = async (event) => {
+    event.preventDefault();
+    setPasswordError('');
+
+    const errors = {};
+    if (!passwords.currentPassword) errors.currentPassword = 'Current password is required.';
+    if (passwords.newPassword.length < 12) {
+      errors.newPassword = 'Password must be at least 12 characters.';
+    } else if (new TextEncoder().encode(passwords.newPassword).length > 72) {
+      errors.newPassword = 'Password must be no more than 72 UTF-8 bytes.';
+    }
+    if (!passwords.confirmPassword) {
+      errors.confirmPassword = 'Please confirm your new password.';
+    } else if (passwords.newPassword !== passwords.confirmPassword) {
+      errors.confirmPassword = 'Passwords do not match.';
+    }
+    setPasswordErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+
+    setIsChangingPassword(true);
+    try {
+      await changePassword(passwords);
+      setPasswords({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      clearSession();
+      navigate('/login', {
+        replace: true,
+        state: { notice: 'Password changed. Sign in again with your new password.' },
+      });
+    } catch (error) {
+      const fieldErrors = Object.fromEntries(
+        (error.errors || []).map(({ field, message }) => [field, message])
+      );
+      setPasswordErrors(fieldErrors);
+      setPasswordError(error.message);
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
+  const renderPasswordField = (field, label, autoComplete, helperText) => (
+    <div>
+      <label htmlFor={`password-${field}`} className="block text-xs font-semibold text-brand-text mb-1">
+        {label}
+      </label>
+      <div className="relative">
+        <input
+          id={`password-${field}`}
+          type={visiblePasswords[field] ? 'text' : 'password'}
+          autoComplete={autoComplete}
+          value={passwords[field]}
+          onChange={(event) => {
+            setPasswords((previous) => ({ ...previous, [field]: event.target.value }));
+            setPasswordErrors((previous) => ({ ...previous, [field]: '' }));
+            setPasswordError('');
+          }}
+          maxLength={72}
+          aria-invalid={Boolean(passwordErrors[field])}
+          aria-describedby={passwordErrors[field] ? `password-${field}-error` : undefined}
+          className="block w-full rounded-md border border-brand-border py-2 pl-3 pr-10 text-sm text-brand-text focus:outline-none focus:ring-1 focus:ring-brand-primary"
+        />
+        <button
+          type="button"
+          onClick={() =>
+            setVisiblePasswords((previous) => ({
+              ...previous,
+              [field]: !previous[field],
+            }))
+          }
+          aria-label={`${visiblePasswords[field] ? 'Hide' : 'Show'} ${label.toLowerCase()}`}
+          aria-pressed={Boolean(visiblePasswords[field])}
+          className="absolute inset-y-0 right-0 flex items-center px-3 text-brand-muted hover:text-brand-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-primary"
+        >
+          {visiblePasswords[field] ? (
+            <EyeOff className="h-4 w-4" aria-hidden="true" />
+          ) : (
+            <Eye className="h-4 w-4" aria-hidden="true" />
+          )}
+        </button>
+      </div>
+      {passwordErrors[field] && (
+        <p id={`password-${field}-error`} className="mt-1 text-xs text-brand-error" role="alert">
+          {passwordErrors[field]}
+        </p>
+      )}
+      {helperText && <p className="mt-1 text-xs text-brand-muted">{helperText}</p>}
+    </div>
+  );
 
   const handleSavePreferences = (e) => {
     e.preventDefault();
@@ -188,7 +281,7 @@ export default function SettingsPage() {
           </form>
         </div>
 
-        {/* Section 3: Password & Security Entry Point */}
+        {/* Section 3: Password & Security */}
         <div className="bg-white rounded-lg border border-brand-border p-6 shadow-card">
           <div className="flex items-center gap-2 pb-3 mb-4 border-b border-brand-border">
             <Lock className="h-4 w-4 text-brand-primary" />
@@ -197,81 +290,32 @@ export default function SettingsPage() {
             </h2>
           </div>
 
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">
-            <div>
-              <p className="font-semibold text-brand-text">Staff Security Password</p>
-              <p className="text-brand-muted mt-0.5">
-                Password changes are not available in CareSync yet. Contact your administrator for assistance.
+          <form onSubmit={handleChangePassword} className="space-y-4 max-w-2xl">
+            <p className="text-xs text-brand-muted">
+              Verify your current password. Your password must be at least 12 characters;
+              changing it will sign you out of all devices.
+            </p>
+            {passwordError && (
+              <p className="rounded-md border border-red-200 bg-red-50 p-3 text-xs text-brand-error" role="alert">
+                {passwordError}
               </p>
+            )}
+            {renderPasswordField('currentPassword', 'Current password', 'current-password')}
+            {renderPasswordField(
+              'newPassword',
+              'New password',
+              'new-password',
+              'Use at least 12 characters (maximum 72 UTF-8 bytes).'
+            )}
+            {renderPasswordField('confirmPassword', 'Confirm new password', 'new-password')}
+            <div className="pt-1">
+              <PrimaryButton type="submit" size="sm" isLoading={isChangingPassword}>
+                Change password
+              </PrimaryButton>
             </div>
-            <SecondaryButton
-              icon={Key}
-              size="sm"
-              onClick={() => setIsPasswordModalOpen(true)}
-            >
-              Change Security Password
-            </SecondaryButton>
-          </div>
+          </form>
         </div>
       </div>
-
-      {/* Password Change Information Modal */}
-      <Modal
-        isOpen={isPasswordModalOpen}
-        onClose={() => setIsPasswordModalOpen(false)}
-        title="Security Password Management"
-        subtitle="Institutional Credential & Active Directory Verification"
-        maxWidth="max-w-md"
-      >
-        <div className="space-y-4 text-xs">
-          <div className="p-3 bg-slate-50 border border-brand-border rounded-md text-slate-700 space-y-2 leading-relaxed">
-            <div className="flex items-center gap-2 text-brand-primary font-semibold">
-              <Shield className="h-4 w-4" />
-              <span>Password changes are not available yet</span>
-            </div>
-            <p>
-              Staff passwords are securely hashed at account provisioning. Password change and reset workflows are not available in this release.
-            </p>
-            <p className="text-slate-500">
-              In this frontend prototype, no misleading fake credential updates are performed.
-            </p>
-          </div>
-
-          <div className="space-y-3 pt-2">
-            <div>
-              <label className="block text-brand-muted font-medium mb-1">
-                Current Password
-              </label>
-              <input
-                type="password"
-                disabled
-                value="••••••••••••"
-                className="w-full py-1.5 px-3 bg-slate-100 border border-brand-border rounded text-slate-500 cursor-not-allowed"
-              />
-            </div>
-            <div>
-              <label className="block text-brand-muted font-medium mb-1">
-                New Password
-              </label>
-              <input
-                type="password"
-                disabled
-                placeholder="Contact your administrator"
-                className="w-full py-1.5 px-3 bg-slate-100 border border-brand-border rounded text-slate-500 cursor-not-allowed"
-              />
-            </div>
-          </div>
-
-          <div className="pt-3 border-t border-brand-border flex justify-end">
-            <PrimaryButton
-              size="sm"
-              onClick={() => setIsPasswordModalOpen(false)}
-            >
-              Close Notice
-            </PrimaryButton>
-          </div>
-        </div>
-      </Modal>
     </PageContainer>
   );
 }

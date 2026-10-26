@@ -14,6 +14,7 @@ import {
 } from '../middleware/auth.middleware.js';
 import { validateRequest } from '../middleware/validate-request.middleware.js';
 import {
+  changePasswordSchema,
   loginSchema,
   resetPasswordParamsSchema,
   resetPasswordSchema,
@@ -104,6 +105,65 @@ export function createAuthRouter({
       return next(error);
     }
   });
+
+  router.patch(
+    '/password',
+    authenticate,
+    resetPasswordLimiter,
+    validateRequest(changePasswordSchema, 'body', 'validatedBody'),
+    async (req, res, next) => {
+      try {
+        const { currentPassword, newPassword } = req.validatedBody;
+        const user = await UserModel.findOne({
+          _id: req.auth.userId,
+          isActive: true,
+        })
+          .select('+passwordHash')
+          .exec();
+
+        if (!user) {
+          return res.status(401).json({
+            success: false,
+            message: 'Authentication is required',
+          });
+        }
+
+        const passwordMatches = await bcrypt.compare(currentPassword, user.passwordHash);
+        if (!passwordMatches) {
+          return res.status(400).json({
+            success: false,
+            message: 'Current password is incorrect',
+          });
+        }
+
+        const passwordHash = await bcrypt.hash(newPassword, 12);
+        const update = await UserModel.updateOne(
+          {
+            _id: user._id,
+            isActive: true,
+            passwordHash: user.passwordHash,
+          },
+          { $set: { passwordHash } }
+        ).exec();
+
+        if (update.matchedCount === 0) {
+          return res.status(409).json({
+            success: false,
+            message: 'The password changed before this request completed. Sign in again.',
+          });
+        }
+
+        await SessionModel.deleteMany({ userId: user._id });
+        res.clearCookie(SESSION_COOKIE_NAME, getSessionCookieOptions());
+        return res.json({
+          success: true,
+          message: 'Password changed successfully. Sign in again with your new password.',
+        });
+      } catch (error) {
+        return next(error);
+      }
+    }
+  );
 
   router.patch(
     '/users/:id/password',

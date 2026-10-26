@@ -160,6 +160,13 @@ export async function endSession() {
   return request('/auth/logout', { method: 'POST' });
 }
 
+export async function changePassword(passwords) {
+  return request('/auth/password', {
+    method: 'PATCH',
+    body: JSON.stringify(passwords),
+  });
+}
+
 export async function listMedicalRecords(params = {}, { signal } = {}) {
   const query = new URLSearchParams(params);
   return request(`/medical-records?${query}`, { signal });

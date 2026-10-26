@@ -49,14 +49,18 @@ export function AuthProvider({ children }) {
     return response.data.user;
   };
 
+  const clearSession = () => {
+    setUser(null);
+    setAuthError('');
+  };
+
   const logout = async () => {
     try {
       await endSession();
     } catch (error) {
       if (error.status !== 401) throw error;
     }
-    setUser(null);
-    setAuthError('');
+    clearSession();
   };
 
   return (
@@ -66,6 +70,7 @@ export function AuthProvider({ children }) {
         isAuthenticated,
         login,
         logout,
+        clearSession,
         isLoading,
         authError,
       }}

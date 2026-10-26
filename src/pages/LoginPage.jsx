@@ -111,6 +111,14 @@ export default function LoginPage() {
               <span>{generalError || authError}</span>
             </div>
           )}
+          {location.state?.notice && (
+            <div
+              role="status"
+              className="mb-6 p-3 bg-emerald-50 border border-emerald-200 rounded-md text-xs text-emerald-800"
+            >
+              {location.state.notice}
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-5" noValidate>
             {/* Email Field */}

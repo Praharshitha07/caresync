@@ -121,6 +121,13 @@ An existing staff password can be reset by an authenticated administrator at
 account's active sessions. The endpoint does not return the account's hash or
 the submitted password.
 
+Any authenticated staff member can change their own password with
+`PATCH /api/auth/password`, providing `currentPassword`, `newPassword`, and
+`confirmPassword`. The current password must be correct, and the new password
+must follow the same 12-character/72-byte policy. The endpoint only changes the
+authenticated account, revokes all of its sessions, and clears the current
+session cookie; the user must sign in again.
+
 For initial administrator recovery when no administrator can sign in, a trusted
 operator with authorized access to the server environment and database can run:
 
@@ -318,6 +325,7 @@ live database.
 | `PATCH` | `/api/staff/:id/status` | Admin | Activate/deactivate an account and revoke sessions on deactivation |
 | `POST` | `/api/auth/login` | Public, rate-limited | Verify staff credentials and issue an HttpOnly session cookie |
 | `GET` | `/api/auth/session` | Authenticated | Return the current account's public profile |
+| `PATCH` | `/api/auth/password` | Authenticated, rate-limited | Change the current account's password and revoke all its sessions |
 | `POST` | `/api/auth/logout` | Public, idempotent | Revoke the current session and clear its cookie |
 | `GET` | `/api/patients` | Authenticated staff roles | Searchable, filterable, paginated patient directory |
 | `GET` | `/api/patients/:id` | Authenticated staff roles | Retrieve by patient ID or MongoDB ObjectId |
@@ -353,8 +361,8 @@ dashboard counts and patient/appointment lists are retrieved from the backend.
 
 ## 5. Remaining Scope
 
-- **Identity lifecycle hardening**: Password reset/change, MFA, account lockout
-  and administrative account deactivation workflows are not implemented.
+- **Identity lifecycle hardening**: Password reset/change and account
+  deactivation are implemented; MFA and account lockout are not.
 - **Audit governance**: The application writes authorization events, but
   production needs a reviewed retention policy, database-level append-only
   controls, monitoring, and verification of audit completeness.

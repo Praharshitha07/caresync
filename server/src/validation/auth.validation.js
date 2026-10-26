@@ -16,15 +16,35 @@ export const resetPasswordParamsSchema = z
   })
   .strict();
 
+const passwordSchema = z
+  .string()
+  .min(12, 'Password must be at least 12 characters')
+  .refine(
+    (password) => Buffer.byteLength(password, 'utf8') <= 72,
+    'Password must be no more than 72 UTF-8 bytes'
+  );
+
 export const resetPasswordSchema = z
   .object({
-    newPassword: z
+    newPassword: passwordSchema,
+    confirmPassword: z.string().min(1),
+  })
+  .strict()
+  .refine((value) => value.newPassword === value.confirmPassword, {
+    message: 'Passwords do not match',
+    path: ['confirmPassword'],
+  });
+
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z
       .string()
-      .min(12, 'Password must be at least 12 characters')
+      .min(1, 'Current password is required')
       .refine(
         (password) => Buffer.byteLength(password, 'utf8') <= 72,
-        'Password must be no more than 72 UTF-8 bytes'
+        'Current password must be no more than 72 UTF-8 bytes'
       ),
+    newPassword: passwordSchema,
     confirmPassword: z.string().min(1),
   })
   .strict()
