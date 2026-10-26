@@ -3,7 +3,7 @@
 ## 🔗 Live Demo & Quick Start
 
 * **Live Application (Frontend):** [Open CareSync](https://caresync-frontend-u650.onrender.com)
-* **Backend API:** [CareSync Backend](https://caresync-1-0fux.onrender.com)
+* **Backend API:** [CareSync Backend](https://caresync-1-0fux.onrender.com/api)
 * **GitHub Repository:** [View Source Code](https://github.com/Praharshitha07/caresync)
 
 ### How to Open and Use the Application
