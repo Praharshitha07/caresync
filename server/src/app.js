@@ -78,6 +78,13 @@ if (env.NODE_ENV === 'development') {
 app.use(express.json({ limit: '100kb' }));
 app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
+app.get('/', (req, res) =>
+  res.json({
+    success: true,
+    message: 'CareSync server is running successfully',
+  })
+);
+
 // 6. API Route Registration
 app.use('/api', healthRoutes);
 app.use('/api/auth', authRoutes);

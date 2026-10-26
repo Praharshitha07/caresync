@@ -7,6 +7,18 @@ import { connectDatabase, getDatabaseStatus } from '../src/config/database.js';
 import { isValidMongoUri } from '../src/config/env.js';
 
 test('CareSync Express API & MongoDB Health Tests', async (t) => {
+  await t.test('GET / should return the public server status message', async () => {
+    const res = await request(app)
+      .get('/')
+      .expect(200)
+      .expect('Content-Type', /json/);
+
+    assert.deepEqual(res.body, {
+      success: true,
+      message: 'CareSync server is running successfully',
+    });
+  });
+
   await t.test('GET /api/health should return 200 and process status', async () => {
     const res = await request(app)
       .get('/api/health')
